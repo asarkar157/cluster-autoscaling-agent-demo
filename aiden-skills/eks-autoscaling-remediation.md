@@ -2,15 +2,67 @@
 
 ## Objective
 
-Monitor an EKS cluster for node-level resource pressure and automatically right-size the cluster by creating larger node groups when overutilized and scaling back to smaller node groups when underutilized.
+Scan ALL EKS clusters in the region, report a utilization summary for each, then automatically right-size any cluster that is overutilized (by creating larger node groups) or underutilized (by removing excess node groups).
 
 ## Target Environment
 
 - **AWS Region**: us-west-2
-- **EKS Cluster**: `observability-demo`
+- **Remediation Cluster**: `observability-demo` (the only cluster eligible for remediation actions)
+- **Monitoring Scope**: ALL clusters in the region (including `payments-api`, `inventory-svc`, and any others)
 - **Initial Node Group**: Name starts with `small-pool` (see discovery note below)
 - **Scale-Up Target**: `large-pool` — 3x `t3.xlarge` (4 vCPU, 16 GiB each)
 - **VPC Subnets**: Private subnets in the cluster's VPC
+
+---
+
+## Phase 1: Region-Wide Cluster Scan
+
+Before taking any remediation action, you MUST scan every EKS cluster in the region and produce a summary. This gives visibility into the full fleet.
+
+### Steps
+
+1. **List all EKS clusters** in us-west-2:
+   ```
+   aws eks list-clusters --region us-west-2
+   ```
+
+2. **For each cluster**, gather utilization data:
+   - Call `eks:DescribeCluster` to get cluster status and version.
+   - Call `eks:ListNodegroups` to get node group names, then `eks:DescribeNodegroup` on each to get instance types, node count, and status.
+   - Query **CloudWatch Container Insights** for the cluster's `node_cpu_utilization` and `node_memory_utilization` metrics (namespace `ContainerInsights`, dimension `ClusterName`). Use a 5-minute average.
+
+3. **Output a summary table** with the following format:
+
+   ```
+   ============================================================
+     EKS Cluster Fleet — us-west-2 — Utilization Report
+   ============================================================
+
+   Cluster            Nodes  Instance Type  CPU %   Memory %  Status
+   ─────────────────  ─────  ─────────────  ──────  ────────  ──────────────
+   observability-demo 2      t3.medium      92%     61%       OVERUTILIZED
+   payments-api       1      t3.small       38%     29%       HEALTHY
+   inventory-svc      1      t3.small       35%     27%       HEALTHY
+
+   Clusters scanned: 3
+   Clusters requiring action: 1 (observability-demo)
+   ============================================================
+   ```
+
+   Classification rules:
+   - **OVERUTILIZED**: CPU > 80% OR memory > 75% OR pods in Pending state
+   - **UNDERUTILIZED**: CPU < 30% AND no Pending pods AND more than one node group exists
+   - **HEALTHY**: Everything else (nominal utilization, no action needed)
+
+4. **If no clusters require action**, state that the fleet is healthy and stop. Do not proceed to Phase 2.
+
+5. **If a cluster requires action**, proceed to Phase 2 for that cluster only.
+
+---
+
+## Phase 2: Remediation (observability-demo only)
+
+Only the `observability-demo` cluster is eligible for remediation. If other clusters show issues, report them in the summary but do NOT take action on them.
 
 ## IMPORTANT: Node Group Name Discovery
 
@@ -57,6 +109,26 @@ Check for ALL of the following signals. ALL must be true to confirm underutiliza
 4. **Workloads can fit on smaller pool**: Call `eks:DescribeNodegroup` on the `small-pool-*` node group (using its full name from ListNodegroups) to get its instance types and desired size. Calculate allocatable capacity and compare against total pod resource requests.
 
 ## Remediation Actions
+
+Before executing any remediation step, output a clear action header:
+
+```
+============================================================
+  ACTION: Scale Up — observability-demo
+  Reason: Node CPU utilization at 92% (threshold: 80%)
+  Creating node group: large-pool (3x t3.xlarge)
+============================================================
+```
+
+Or for scale-down:
+
+```
+============================================================
+  ACTION: Scale Down — observability-demo
+  Reason: Node CPU utilization at 24% (threshold: 30%)
+  Removing node group: large-pool-<suffix>
+============================================================
+```
 
 ### Scale Up (Overutilization Detected)
 
@@ -108,14 +180,31 @@ Perform the following steps in order:
 
 **IMPORTANT**: Do not skip step 3. When you detect underutilization and a `large-pool` node group exists, you must call `eks:DeleteNodegroup` to remove it. Simply reporting the underutilization without taking action is not sufficient.
 
-## Verification
+## Verification & Post-Action Summary
 
-After any remediation action, verify:
+After any remediation action, verify the following and then output an updated summary:
 
 - [ ] All nodes report `Ready` status
 - [ ] All pods in the `demo` namespace are `Running` (zero `Pending`)
 - [ ] Node CPU utilization is between 20% and 80%
 - [ ] CloudWatch Container Insights shows updated node count
+
+Then output the post-remediation fleet status:
+
+```
+============================================================
+  Post-Remediation — EKS Fleet Status
+============================================================
+
+Cluster            Nodes  Instance Type     CPU %   Status
+─────────────────  ─────  ───────────────   ──────  ──────────────
+observability-demo 5      t3.medium+xlarge  45%     REMEDIATED ✓
+payments-api       1      t3.small          38%     HEALTHY
+inventory-svc      1      t3.small          35%     HEALTHY
+
+Action taken: Created large-pool (3x t3.xlarge) on observability-demo
+============================================================
+```
 
 ## Action Summary
 
@@ -139,7 +228,8 @@ After any remediation action, verify:
 
 ## AWS APIs Used
 
-- `eks:ListNodegroups` — **Call this FIRST** to discover actual node group names (they have auto-generated suffixes)
+- `eks:ListClusters` — **Call this FIRST** to discover all clusters in the region for the fleet summary
+- `eks:ListNodegroups` — Discover actual node group names (they have auto-generated suffixes)
 - `eks:DescribeCluster` — Get cluster details, subnet IDs, and security group configuration
 - `eks:DescribeNodegroup` — Inspect a node group (always use the full name from ListNodegroups)
 - `eks:CreateNodegroup` — Create the large-pool node group
