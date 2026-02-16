@@ -25,12 +25,25 @@ aws securityhub get-findings --region "$REGION" \
     "ResourceTags":[{"Key":"Purpose","Value":"security-demo","Comparison":"EQUALS"}]
   }' \
   --query 'Findings[].{Title:Title,Severity:Severity.Label,Resource:Resources[0].Id,Status:Workflow.Status}' \
-  --output table 2>/dev/null || echo "(No findings yet -- Security Hub may still be initializing)"
+  --output table 2>/dev/null || echo "(No compliance findings yet)"
+
+echo ""
+echo "--- GuardDuty Threat Findings ---"
+echo ""
+
+aws securityhub get-findings --region "$REGION" \
+  --filters '{
+    "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
+    "ProductName":[{"Value":"GuardDuty","Comparison":"EQUALS"}],
+    "WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]
+  }' \
+  --query 'Findings[].{Type:Types[0],Severity:Severity.Label,Resource:Resources[0].Id,Status:Workflow.Status}' \
+  --output table 2>/dev/null || echo "(No GuardDuty findings yet)"
 
 echo ""
 echo "--- Summary ---"
 
-TOTAL=$(aws securityhub get-findings --region "$REGION" \
+COMPLIANCE_COUNT=$(aws securityhub get-findings --region "$REGION" \
   --filters '{
     "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
     "ComplianceStatus":[{"Value":"FAILED","Comparison":"EQUALS"}],
@@ -39,7 +52,19 @@ TOTAL=$(aws securityhub get-findings --region "$REGION" \
   --query 'length(Findings)' \
   --output text 2>/dev/null || echo "0")
 
-echo "Active failed findings for demo resources: $TOTAL"
+GUARDDUTY_COUNT=$(aws securityhub get-findings --region "$REGION" \
+  --filters '{
+    "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
+    "ProductName":[{"Value":"GuardDuty","Comparison":"EQUALS"}],
+    "WorkflowStatus":[{"Value":"NEW","Comparison":"EQUALS"}]
+  }' \
+  --query 'length(Findings)' \
+  --output text 2>/dev/null || echo "0")
+
+echo "Compliance findings:  $COMPLIANCE_COUNT"
+echo "GuardDuty findings:   $GUARDDUTY_COUNT"
 echo ""
 echo "Security Hub console:"
 echo "  https://${REGION}.console.aws.amazon.com/securityhub/home?region=${REGION}#/findings"
+echo "GuardDuty console:"
+echo "  https://${REGION}.console.aws.amazon.com/guardduty/home?region=${REGION}#/findings"

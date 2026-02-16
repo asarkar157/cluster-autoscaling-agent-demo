@@ -10,7 +10,8 @@ echo "  Observability Demo - Reset Security State"
 echo "============================================"
 echo ""
 echo "This will restore all intentionally misconfigured resources"
-echo "to their vulnerable state and trigger Security Hub re-scan."
+echo "to their vulnerable state, archive old findings, regenerate"
+echo "GuardDuty sample findings, and trigger Security Hub re-scan."
 echo ""
 
 # Re-apply Terraform to restore intentionally vulnerable resources.
@@ -19,13 +20,59 @@ echo ""
 # The terraform_data.trigger_config_evaluation resource automatically
 # triggers AWS Config re-evaluation, so Security Hub findings reappear
 # within 1-3 minutes.
-echo "[1/2] Restoring misconfigured resources via Terraform..."
+echo "[1/4] Restoring misconfigured resources via Terraform..."
 terraform -chdir="$TERRAFORM_DIR" apply -auto-approve
 
-echo ""
-echo "[2/2] Verifying vulnerable state..."
-
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
+DETECTOR_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw guardduty_detector_id)
+
+echo ""
+echo "[2/4] Archiving old GuardDuty findings in Security Hub..."
+OLD_FINDINGS=$(aws securityhub get-findings --region "$REGION" \
+  --filters '{
+    "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
+    "ProductName":[{"Value":"GuardDuty","Comparison":"EQUALS"}],
+    "WorkflowStatus":[{"Value":"RESOLVED","Comparison":"EQUALS"}]
+  }' \
+  --query 'Findings[].{Id:Id,ProductArn:ProductArn}' \
+  --output json 2>/dev/null || echo "[]")
+
+FINDING_COUNT=$(echo "$OLD_FINDINGS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+if [ "$FINDING_COUNT" -gt 0 ]; then
+  IDENTIFIERS=$(echo "$OLD_FINDINGS" | python3 -c "
+import sys, json
+findings = json.load(sys.stdin)
+ids = [{'Id': f['Id'], 'ProductArn': f['ProductArn']} for f in findings]
+print(json.dumps(ids))
+")
+  aws securityhub batch-update-findings --region "$REGION" \
+    --finding-identifiers "$IDENTIFIERS" \
+    --record-state "ARCHIVED" 2>/dev/null || true
+  echo "  Archived $FINDING_COUNT old GuardDuty findings."
+else
+  echo "  No old GuardDuty findings to archive."
+fi
+
+echo ""
+echo "[3/4] Generating fresh GuardDuty sample findings..."
+aws guardduty create-sample-findings \
+  --detector-id "$DETECTOR_ID" \
+  --finding-types \
+    "CryptoCurrency:EC2/BitcoinTool.B!DNS" \
+    "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom" \
+    "Recon:EC2/PortProbeUnprotectedPort" \
+    "Trojan:EC2/DNSDataExfiltration" \
+    "Policy:Kubernetes/ExposedDashboard" \
+    "PrivilegeEscalation:Kubernetes/PrivilegedContainer" \
+    "Discovery:Kubernetes/SuccessfulAnonymousAccess" \
+    "Impact:Kubernetes/MaliciousIPCaller" \
+  --region "$REGION"
+echo "  Generated 8 sample GuardDuty findings."
+
+echo ""
+echo "[4/4] Verifying vulnerable state..."
+
 SG_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_sg_id)
 BUCKET=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_bucket)
 EBS_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_ebs_id)
@@ -90,6 +137,7 @@ fi
 
 echo ""
 echo "Config rule re-evaluation was triggered automatically."
-echo "Findings should reappear in Security Hub within 1-3 minutes."
+echo "Compliance findings should reappear in Security Hub within 1-3 minutes."
+echo "GuardDuty sample findings should appear in Security Hub within 1-5 minutes."
 echo ""
 echo "Run ./scripts/check-findings.sh to monitor."
