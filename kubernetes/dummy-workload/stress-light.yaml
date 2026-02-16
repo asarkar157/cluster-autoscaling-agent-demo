@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: baseline-load
+  namespace: workload
+  labels:
+    app: baseline-load
+    purpose: nominal-utilization
+    app.kubernetes.io/part-of: observability-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: baseline-load
+  template:
+    metadata:
+      labels:
+        app: baseline-load
+        purpose: nominal-utilization
+    spec:
+      containers:
+        - name: stress-ng
+          image: alexeiled/stress-ng:latest
+          args:
+            - "--cpu"
+            - "1"
+            - "--cpu-load"
+            - "50"
+            - "--timeout"
+            - "0"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"

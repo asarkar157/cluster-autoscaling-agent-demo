@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workload
+  labels:
+    app.kubernetes.io/part-of: observability-demo
+    purpose: dummy-baseline

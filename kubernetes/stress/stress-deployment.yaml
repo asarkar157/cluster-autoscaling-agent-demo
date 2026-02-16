@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stress-ng
+  namespace: demo
+  labels:
+    app: stress-ng
+    purpose: load-generation
+    app.kubernetes.io/part-of: observability-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stress-ng
+  template:
+    metadata:
+      labels:
+        app: stress-ng
+        purpose: load-generation
+    spec:
+      containers:
+        - name: stress-ng
+          image: alexeiled/stress-ng:latest
+          args:
+            - "--cpu"
+            - "2"
+            - "--vm"
+            - "1"
+            - "--vm-bytes"
+            - "256M"
+            - "--timeout"
+            - "0"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"

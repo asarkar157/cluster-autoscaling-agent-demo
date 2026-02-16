@@ -1,0 +1,15 @@
+# metrics-server is typically installed as an EKS add-on via Terraform or Helm.
+# This manifest is provided as a fallback if the add-on is not available.
+#
+# Preferred approach: install via Helm
+#   helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+#   helm upgrade --install metrics-server metrics-server/metrics-server \
+#     --namespace kube-system \
+#     --set args[0]="--kubelet-preferred-address-types=InternalIP"
+#
+# Alternatively, apply the official components manifest:
+#   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+# After installation, verify with:
+#   kubectl top nodes
+#   kubectl top pods -n demo

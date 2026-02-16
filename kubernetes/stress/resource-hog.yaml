@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: resource-hog
+  namespace: demo
+  labels:
+    app: resource-hog
+    purpose: load-generation
+    app.kubernetes.io/part-of: observability-demo
+spec:
+  parallelism: 4
+  completions: 4
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: resource-hog
+        purpose: load-generation
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: resource-hog
+          image: alexeiled/stress-ng:latest
+          args:
+            - "--cpu"
+            - "4"
+            - "--vm"
+            - "2"
+            - "--vm-bytes"
+            - "512M"
+            - "--timeout"
+            - "300s"
+          resources:
+            requests:
+              cpu: "800m"
+              memory: "768Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
