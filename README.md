@@ -10,42 +10,48 @@ A demo environment that shows Aiden by StackGen automatically:
 ## Architecture
 
 ```
-                           +---------------------+
-                           |  Aiden by StackGen   |
-                           |  (scans AWS account) |
-                           +----------+----------+
-                                      |
-                      detects issues, auto-remediates
-                                      |
-              +-----------------------+-----------------------+
-              |                                               |
-   +----------v----------+                       +------------v-----------+
-   |   EKS Cluster Demo  |                       |  Security Demo         |
-   |                      |                       |                        |
-   |  small-pool          |                       |  Open SG (SSH 0/0)     |
-   |  t3.medium x2        |                       |  Public S3 bucket      |
-   |                      |                       |  Unencrypted EBS       |
-   |  large-pool          |                       |  Admin IAM role        |
-   |  t3.xlarge x3        |                       |                        |
-   |  (created by Aiden)  |                       |  GuardDuty + Security  |
-   +----------------------+                       |  Hub monitoring        |
-                                                  +------------------------+
+                              +---------------------+
+                              |  Aiden by StackGen   |
+                              |  (scans AWS account) |
+                              +----------+----------+
+                                         |
+                         detects issues, auto-remediates
+                                         |
+         +------------------+------------+------------+------------------+
+         |                  |                         |                  |
++--------v--------+ +------v---------+   +-----------v------+ +--------v---------+
+| observability-  | | payments-api   |   | Security Demo    | | inventory-svc    |
+| demo (Scale Up) | | (Scale Down)   |   |                  | | (Backdrop)       |
+|                 | |                |   | Open SG (SSH+RDP)| |                  |
+| small-pool      | | small-pool     |   | Public S3 bucket | | default          |
+| t3.medium x2    | | t3.medium x2   |   | Unencrypted EBS  | | t3.small x1      |
+|                 | | large-pool     |   | Admin IAM role   | | ~40% CPU         |
+| HIGH load       | | t3.xlarge x2   |   | Vulnerable EC2s  | +------------------+
+| Aiden ADDS      | | LOW load       |   |                  |
+| large-pool      | | Aiden REMOVES  |   | GuardDuty +      |
++-----------------+ | large-pool     |   | Security Hub     |
+                    +----------------+   +------------------+
 ```
 
 ---
 
 ## Part 1: EKS Node Pool Auto-Scaling
 
+Two clusters demonstrate both scale-up and scale-down scenarios simultaneously:
+
+| Cluster | Starting State | Load | Aiden Action |
+|---------|---------------|------|--------------|
+| `observability-demo` | small-pool only (2x t3.medium) | HIGH (~90%+ CPU) | **Adds** large-pool (3x t3.xlarge) |
+| `payments-api` | small-pool + large-pool (2x t3.medium + 2x t3.xlarge) | LOW (~15-20% CPU) | **Removes** large-pool |
+
 ### Demo Flow
 
-1. **Setup** -- Terraform provisions a VPC, EKS cluster, and a small node group (`t3.medium` x2)
-2. **Deploy workloads** -- nginx demo app (3 replicas) and a stress-ng pod (1 replica)
-3. **Inject load** -- Presenter scales stress-ng to 6+ replicas, overwhelming the small nodes
-4. **Aiden detects overutilization** -- Scans the AWS account, sees nodes at 85-95% CPU with Pending pods
-5. **Aiden scales up** -- Creates a new `large-pool` node group (`t3.xlarge` x3) attached to the cluster
-6. **Remove load** -- Presenter scales stress-ng back down to 1 replica
-7. **Aiden detects low utilization** -- Sees nodes at 10-20% CPU
-8. **Aiden scales down** -- Reattaches the smaller node pool and deactivates the larger one
+1. **Setup** -- `first-time-setup.sh` provisions the VPC, all 3 EKS clusters, and deploys workloads
+2. **Initialize** -- `initialize-demo.sh` injects high load on `observability-demo` and ensures low load on `payments-api`
+3. **Aiden detects overutilization on `observability-demo`** -- Sees nodes at 85-95% CPU with Pending pods
+4. **Aiden scales up** -- Creates a new `large-pool` node group (`t3.xlarge` x3) on `observability-demo`
+5. **Aiden detects underutilization on `payments-api`** -- Sees nodes at 15-20% CPU with an oversized large-pool
+6. **Aiden scales down** -- Removes the `large-pool` node group from `payments-api`, leaving only the small-pool
 
 ## Prerequisites
 
@@ -79,46 +85,44 @@ aws configure
 
 This will:
 - Create a VPC with public and private subnets
-- Create an EKS cluster with a `small-pool` node group (2x `t3.medium`)
-- Install metrics-server
-- Deploy the demo app (nginx x3) and stress generator (stress-ng x1)
+- Create 3 EKS clusters: `observability-demo`, `payments-api`, and `inventory-svc`
+- Install metrics-server on `observability-demo` and `payments-api`
+- Deploy workloads on all clusters
 
-Setup takes approximately 15-20 minutes.
+Setup takes approximately 20-30 minutes.
 
-### 4. Monitor utilization (in a separate terminal)
+### 4. Initialize for a demo run
+
+```bash
+./scripts/demo/initialize-demo.sh
+```
+
+This stages both EKS demo scenarios automatically:
+- Injects high load (8x stress-ng) on `observability-demo`
+- Ensures low load on `payments-api` (light workload with oversized large-pool)
+- Resets security resources to their vulnerable state
+
+### 5. Monitor utilization (in a separate terminal)
 
 ```bash
 ./scripts/diagnostic/check-utilization.sh
 ```
 
-### 5. Inject load to overutilize nodes
-
-```bash
-./scripts/demo/load-up.sh
-```
-
-This scales stress-ng to 6 replicas. With the resource requests, this pushes the 2x `t3.medium` nodes
-past their allocatable capacity, causing pods to go Pending and node CPU to spike above 90%.
-
 ### 6. Wait for Aiden
 
-Aiden by StackGen will scan the AWS account, detect the overutilization, and create a new `large-pool`
-node group with `t3.xlarge` instances. Watch the monitoring terminal to see new nodes join the cluster
-and Pending pods get scheduled.
+Aiden by StackGen will scan all EKS clusters in the region:
+- **observability-demo**: Detects overutilization, creates a `large-pool` node group (3x t3.xlarge)
+- **payments-api**: Detects underutilization with oversized large-pool, removes it
 
-### 7. Reduce load
+### 7. Reset for next demo
 
 ```bash
-./scripts/demo/load-down.sh
+./scripts/demo/initialize-demo.sh
 ```
 
-This scales stress-ng back to 1 replica, dropping utilization across all nodes.
+Re-run to restore the starting state for both clusters.
 
-### 8. Wait for Aiden (scale down)
-
-Aiden detects the low utilization and deactivates the larger node group, reattaching the smaller pool.
-
-### 9. Tear down
+### 8. Tear down
 
 ```bash
 ./scripts/demo/teardown.sh
@@ -128,19 +132,27 @@ This destroys all Kubernetes resources and the Terraform-managed infrastructure.
 
 ## Resource Budget
 
+### observability-demo (scale-up cluster)
+
 | Component | CPU Request | Memory Request | Replicas | Total CPU | Total Memory |
 |-----------|-------------|----------------|----------|-----------|--------------|
 | demo-app (nginx) | 200m | 256Mi | 3 | 600m | 768Mi |
 | stress-ng (idle) | 500m | 512Mi | 1 | 500m | 512Mi |
 | **Baseline total** | | | | **1100m** | **1280Mi** |
-| stress-ng (loaded) | 500m | 512Mi | 6 | 3000m | 3072Mi |
-| **Loaded total** | | | | **3600m** | **3840Mi** |
+| stress-ng (loaded) | 500m | 512Mi | 8 | 4000m | 4096Mi |
+| **Loaded total** | | | | **4600m** | **4864Mi** |
 
-**Node capacity** (2x `t3.medium`):
-- Total: 4 vCPU, 8 GiB
-- Allocatable (after system overhead): ~3.5 vCPU, ~7 GiB
-- Baseline utilization: ~31% CPU
-- Loaded utilization: **~103% CPU** (exceeds allocatable, pods go Pending)
+Node capacity (small-pool: 2x `t3.medium`): ~3.5 vCPU allocatable. Loaded utilization: **~131% CPU** (pods go Pending).
+
+### payments-api (scale-down cluster)
+
+| Component | CPU Request | Memory Request | Replicas | Total CPU | Total Memory |
+|-----------|-------------|----------------|----------|-----------|--------------|
+| payments-app (nginx) | 100m | 64Mi | 2 | 200m | 128Mi |
+| payments-worker (stress-ng) | 200m | 64Mi | 1 | 200m | 64Mi |
+| **Total** | | | | **400m** | **192Mi** |
+
+Node capacity (small-pool: 2x `t3.medium` + large-pool: 2x `t3.xlarge`): ~19.5 vCPU allocatable. Utilization: **~2% CPU** — large-pool is clearly unnecessary.
 
 ---
 
@@ -282,7 +294,7 @@ observability-demo/
 │   ├── outputs.tf                      # Cluster info outputs
 │   ├── vpc.tf                          # VPC with public + private subnets
 │   ├── eks.tf                          # EKS cluster + small node group
-│   ├── dummy-clusters.tf              # Baseline EKS clusters (payments, inventory)
+│   ├── dummy-clusters.tf              # payments-api (scale-down) + inventory-svc (backdrop)
 │   ├── security.tf                     # GuardDuty + Security Hub + AWS Config
 │   ├── vulnerable.tf                   # Intentionally misconfigured resources
 │   └── security_outputs.tf             # Security-related outputs
@@ -295,6 +307,9 @@ observability-demo/
 │   ├── stress/
 │   │   ├── stress-deployment.yaml      # stress-ng (1 replica, scalable)
 │   │   └── resource-hog.yaml           # Batch job for burst load
+│   ├── payments-workload/
+│   │   ├── namespace.yaml              # payments namespace
+│   │   └── deployment.yaml             # Light workload for scale-down demo
 │   └── dummy-workload/
 │       ├── namespace.yaml              # workload namespace
 │       └── stress-light.yaml           # Light CPU load for dummy clusters
@@ -327,6 +342,7 @@ observability-demo/
 ## Key Design Decisions
 
 - **No Cluster Autoscaler or Karpenter**: Intentionally excluded so Aiden is the sole system making scaling decisions
+- **Dual-cluster EKS demo**: `observability-demo` shows scale-up, `payments-api` shows scale-down — Aiden handles both in one scan
 - **t3.medium for small pool**: Affordable for a demo, small enough to overutilize quickly with modest load
 - **stress-ng for load generation**: Simple, controllable, no custom code -- just scale the replicas
 - **Hybrid orchestration**: Infrastructure and workloads are automated; load injection is manual for presentation control
@@ -356,11 +372,14 @@ Edit `terraform/variables.tf` to change:
 ## Cost Estimate
 
 Running this demo costs approximately:
-- EKS cluster: ~$0.10/hr
-- 2x t3.medium: ~$0.08/hr
+- 3x EKS clusters: ~$0.30/hr
+- observability-demo (2x t3.medium): ~$0.08/hr
+- payments-api (2x t3.medium + 2x t3.xlarge): ~$0.75/hr
+- inventory-svc (1x t3.small): ~$0.02/hr
 - NAT Gateway: ~$0.045/hr
 - GuardDuty: ~$0.04/hr (~$1/day)
 - Security Hub: negligible (~$0.001/finding/month)
+- 2x t2.micro EC2 (vulnerable instances): free tier eligible
 - Cross-account IAM role: free (IAM has no charge)
-- **Total (small pool only): ~$0.27/hr**
-- With large pool (3x t3.xlarge): add ~$0.50/hr
+- **Total: ~$1.24/hr**
+- After Aiden removes payments-api large-pool: saves ~$0.67/hr

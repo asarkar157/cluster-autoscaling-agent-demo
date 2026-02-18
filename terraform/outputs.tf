@@ -59,17 +59,38 @@ output "configure_kubectl" {
   value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
 }
 
-# ---------- Dummy clusters ----------
+# ---------- payments-api (scale-down demo cluster) ----------
+
+output "payments_cluster_name" {
+  description = "Name of the payments-api EKS cluster"
+  value       = module.eks_payments.cluster_name
+}
+
+output "payments_cluster_endpoint" {
+  description = "Endpoint for the payments-api EKS cluster API server"
+  value       = module.eks_payments.cluster_endpoint
+}
+
+output "payments_node_group_small_pool_arn" {
+  description = "ARN of the payments-api small-pool node group"
+  value       = module.eks_payments.eks_managed_node_groups["small-pool"].node_group_arn
+}
+
+output "payments_node_group_large_pool_arn" {
+  description = "ARN of the payments-api large-pool node group"
+  value       = module.eks_payments.eks_managed_node_groups["large-pool"].node_group_arn
+}
+
+# ---------- Dummy backdrop cluster ----------
 
 output "dummy_cluster_names" {
   description = "Names of the dummy baseline clusters"
-  value       = [module.eks_payments.cluster_name, module.eks_inventory.cluster_name]
+  value       = [module.eks_inventory.cluster_name]
 }
 
 output "dummy_cluster_endpoints" {
   description = "API server endpoints for the dummy clusters"
   value = {
-    (module.eks_payments.cluster_name)  = module.eks_payments.cluster_endpoint
     (module.eks_inventory.cluster_name) = module.eks_inventory.cluster_endpoint
   }
 }

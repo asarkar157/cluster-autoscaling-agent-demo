@@ -11,15 +11,15 @@ echo "  Observability Demo - Teardown"
 echo "============================================"
 echo ""
 
-DUMMY_CLUSTERS=("payments-api" "inventory-svc")
+DUMMY_CLUSTERS=("inventory-svc")
 
 echo "This will DESTROY all demo resources including:"
-echo "  - Kubernetes workloads (demo + workload namespaces)"
-echo "  - EKS clusters (main + dummy: ${DUMMY_CLUSTERS[*]})"
+echo "  - Kubernetes workloads (demo + payments + workload namespaces)"
+echo "  - EKS clusters (observability-demo + payments-api + inventory-svc)"
 echo "  - VPC and networking"
 echo "  - GuardDuty detector"
 echo "  - Security Hub account settings"
-echo "  - Vulnerable demo resources (SG, S3, EBS, IAM)"
+echo "  - Vulnerable demo resources (SG, S3, EBS, IAM, EC2)"
 echo ""
 
 read -rp "Continue? (yes/no): " CONFIRM
@@ -31,17 +31,23 @@ fi
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region 2>/dev/null || echo "us-west-2")
 
 echo ""
-echo "[1/4] Removing Kubernetes workloads (main cluster)..."
+echo "[1/5] Removing Kubernetes workloads (main cluster — observability-demo)..."
 kubectl delete -f "$K8S_DIR/stress/stress-deployment.yaml" --ignore-not-found=true 2>/dev/null || true
 kubectl delete -f "$K8S_DIR/demo-app/" --ignore-not-found=true 2>/dev/null || true
 kubectl delete -f "$K8S_DIR/namespace.yaml" --ignore-not-found=true 2>/dev/null || true
 
 echo ""
-echo "[2/4] Removing metrics-server..."
+echo "[2/5] Removing metrics-server (main cluster)..."
 helm uninstall metrics-server --namespace kube-system 2>/dev/null || true
 
 echo ""
-echo "[3/4] Removing workloads from dummy clusters..."
+echo "[3/5] Removing workloads from payments-api cluster..."
+aws eks update-kubeconfig --region "$REGION" --name "payments-api" --alias "payments-api" 2>/dev/null || true
+kubectl --context "payments-api" delete -f "$K8S_DIR/payments-workload/" --ignore-not-found=true 2>/dev/null || true
+helm uninstall metrics-server --kube-context "payments-api" --namespace kube-system 2>/dev/null || true
+
+echo ""
+echo "[4/5] Removing workloads from dummy clusters..."
 for CLUSTER in "${DUMMY_CLUSTERS[@]}"; do
   echo "  -> Cleaning up $CLUSTER..."
   aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER" --alias "$CLUSTER" 2>/dev/null || true
@@ -49,7 +55,7 @@ for CLUSTER in "${DUMMY_CLUSTERS[@]}"; do
 done
 
 echo ""
-echo "[4/4] Destroying Terraform infrastructure (all EKS clusters, VPC, GuardDuty, Security Hub, vulnerable resources)..."
+echo "[5/5] Destroying Terraform infrastructure (all EKS clusters, VPC, GuardDuty, Security Hub, vulnerable resources)..."
 terraform -chdir="$TERRAFORM_DIR" destroy -auto-approve
 
 echo ""

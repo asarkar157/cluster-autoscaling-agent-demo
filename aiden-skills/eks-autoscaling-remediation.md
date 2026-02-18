@@ -19,8 +19,8 @@ Scan ALL EKS clusters in the region, then automatically right-size any cluster t
 ## Target Environment
 
 - **AWS Region**: us-west-2
-- **Remediation Cluster**: `observability-demo` (the only cluster eligible for remediation actions)
-- **Monitoring Scope**: ALL clusters in the region (including `payments-api`, `inventory-svc`, and any others)
+- **Remediation Clusters**: `observability-demo` AND `payments-api` (both are eligible for remediation actions)
+- **Monitoring Scope**: ALL clusters in the region (including `inventory-svc` and any others)
 - **Initial Node Group**: Name starts with `small-pool` (see discovery note below)
 - **Scale-Up Target**: `large-pool` — 3x `t3.xlarge` (4 vCPU, 16 GiB each)
 - **VPC Subnets**: Private subnets in the cluster's VPC
@@ -58,7 +58,7 @@ Scan every EKS cluster in the region silently. Save all results internally — d
 
 ## Phase 2: Remediation — execute silently (do NOT output anything yet)
 
-Only the `observability-demo` cluster is eligible for remediation. If other clusters show issues, note them internally but do NOT take action on them. Execute all remediation API calls silently and save the results for the final report.
+Both `observability-demo` and `payments-api` clusters are eligible for remediation. If other clusters (like `inventory-svc`) show issues, note them internally but do NOT take action on them. Execute all remediation API calls silently and save the results for the final report.
 
 ## IMPORTANT: Node Group Name Discovery
 
@@ -68,7 +68,7 @@ The EKS managed node groups in this cluster have auto-generated suffixes appende
 
 1. Call `eks:ListNodegroups` for the cluster first:
    ```
-   aws eks list-nodegroups --cluster-name observability-demo --region us-west-2
+   aws eks list-nodegroups --cluster-name <cluster-name> --region us-west-2
    ```
    This returns the full list of actual node group names.
 
@@ -112,7 +112,7 @@ Execute the appropriate remediation immediately. Do NOT output anything yet — 
 
 Perform the following steps in order:
 
-1. **Create a new managed node group** attached to the `observability-demo` EKS cluster:
+1. **Create a new managed node group** attached to the affected EKS cluster:
    - Name: `large-pool`
    - Instance type: `t3.xlarge` (4 vCPU, 16 GiB RAM)
    - Desired size: 3
@@ -122,7 +122,7 @@ Perform the following steps in order:
    - Subnets: Same private subnets as the existing cluster (available from the EKS cluster configuration)
    - Node labels: `pool=large`, `role=worker`
    - IAM role: Call `eks:DescribeNodegroup` on the `small-pool-*` node group (using its full name from ListNodegroups) to get its `nodeRole` ARN. Use that same IAM role for the new node group.
-   - Tags: `NodePool=large-pool`, `Project=observability-demo`, `ManagedBy=aiden`
+   - Tags: `NodePool=large-pool`, `Project=<cluster-name>`, `ManagedBy=aiden`
 
 2. **Wait for nodes to become Ready**: Monitor the new node group until all 3 nodes report `Ready` status in the Kubernetes API (typically 2-3 minutes).
 
@@ -143,7 +143,7 @@ Perform the following steps in order:
 3. **Delete the large-pool node group immediately**: Call the AWS EKS API to delete the node group:
    ```
    aws eks delete-nodegroup \
-     --cluster-name observability-demo \
+     --cluster-name <cluster-name> \
      --nodegroup-name <full-large-pool-name-from-step-1> \
      --region us-west-2
    ```
@@ -176,14 +176,14 @@ Your response to the user MUST follow this format:
   EKS Cluster Fleet — us-west-2 — Scan & Remediation Report
 ============================================================
 
-Cluster            Nodes  Instance Type  CPU %   Memory %  Status
-─────────────────  ─────  ─────────────  ──────  ────────  ──────────────
-observability-demo 2      t3.medium      92%     61%       OVERUTILIZED
-payments-api       1      t3.small       38%     29%       HEALTHY
-inventory-svc      1      t3.small       35%     27%       HEALTHY
+Cluster            Nodes  Node Groups        Instance Types        CPU %   Memory %  Status
+─────────────────  ─────  ─────────────────  ────────────────────  ──────  ────────  ──────────────
+observability-demo 2      small-pool         t3.medium             92%     61%       OVERUTILIZED
+payments-api       8      small-pool+large   t3.medium+t3.xlarge   18%     12%       UNDERUTILIZED
+inventory-svc      1      default            t3.small              35%     27%       HEALTHY
 
 Clusters scanned: 3
-Clusters requiring action: 1 (observability-demo)
+Clusters requiring action: 2 (observability-demo, payments-api)
 
 ============================================================
   ACTION TAKEN: Scale Up — observability-demo
@@ -191,14 +191,19 @@ Clusters requiring action: 1 (observability-demo)
   Created node group: large-pool (3x t3.xlarge)
   Node group status: ACTIVE
 ============================================================
+  ACTION TAKEN: Scale Down — payments-api
+  Reason: Node CPU utilization at 18% with 2 active node groups
+  Deleted node group: large-pool (2x t3.xlarge)
+  Remaining: small-pool (2x t3.medium)
+============================================================
 
 --- Post-Remediation Fleet Status ---
 
-Cluster            Nodes  Instance Type     CPU %   Status
-─────────────────  ─────  ───────────────   ──────  ──────────────
-observability-demo 5      t3.medium+xlarge  45%     REMEDIATED ✓
-payments-api       1      t3.small          38%     HEALTHY
-inventory-svc      1      t3.small          35%     HEALTHY
+Cluster            Nodes  Node Groups   Instance Types        CPU %   Status
+─────────────────  ─────  ───────────   ────────────────────  ──────  ──────────────
+observability-demo 5      small+large   t3.medium+t3.xlarge   45%     REMEDIATED ✓ (scaled up)
+payments-api       2      small-pool    t3.medium             32%     REMEDIATED ✓ (scaled down)
+inventory-svc      1      default       t3.small              35%     HEALTHY
 
 ============================================================
 ```

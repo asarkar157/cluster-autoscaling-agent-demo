@@ -5,29 +5,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 
+K8S_DIR="$ROOT_DIR/kubernetes"
+
 echo "============================================"
-echo "  Observability Demo - Reset Security State"
+echo "  Observability Demo - Initialize"
 echo "============================================"
 echo ""
-echo "This will restore all intentionally misconfigured resources"
-echo "to their vulnerable state, archive old findings, regenerate"
-echo "GuardDuty sample findings, and trigger Security Hub re-scan."
+echo "This will:"
+echo "  - Restore all intentionally misconfigured resources to vulnerable state"
+echo "  - Archive old findings & regenerate GuardDuty samples"
+echo "  - Stage EKS autoscaling demos (high load on observability-demo,"
+echo "    low load on payments-api with oversized large-pool)"
 echo ""
 
-# Re-apply Terraform to restore intentionally vulnerable resources.
-# Aiden's remediations (SG rule removal, S3 block public access, etc.)
-# show up as drift -- terraform apply reverts them to the "broken" state.
-# The terraform_data.trigger_config_evaluation resource automatically
-# triggers AWS Config re-evaluation, so Security Hub findings reappear
-# within 1-3 minutes.
-echo "[1/4] Restoring misconfigured resources via Terraform..."
+# Re-apply Terraform to restore intentionally vulnerable resources
+# AND recreate the large-pool node group on payments-api if Aiden removed it.
+echo "[1/6] Restoring infrastructure via Terraform..."
 terraform -chdir="$TERRAFORM_DIR" apply -auto-approve
 
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
 DETECTOR_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw guardduty_detector_id)
 
 echo ""
-echo "[2/4] Archiving old GuardDuty findings in Security Hub..."
+echo "[2/6] Archiving old GuardDuty findings in Security Hub..."
 OLD_FINDINGS=$(aws securityhub get-findings --region "$REGION" \
   --filters '{
     "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
@@ -55,7 +55,7 @@ else
 fi
 
 echo ""
-echo "[3/4] Generating fresh GuardDuty sample findings..."
+echo "[3/6] Generating fresh GuardDuty sample findings..."
 aws guardduty create-sample-findings \
   --detector-id "$DETECTOR_ID" \
   --finding-types \
@@ -71,7 +71,7 @@ aws guardduty create-sample-findings \
 echo "  Generated 8 sample GuardDuty findings."
 
 echo ""
-echo "[4/4] Verifying vulnerable state..."
+echo "[4/6] Verifying vulnerable state..."
 
 SG_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_sg_id)
 BUCKET=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_bucket)
@@ -124,20 +124,65 @@ else
   PASS=false
 fi
 
+# -------------------------------------------------------------------
+# 5. Stage EKS scale-up demo: inject high load on observability-demo
+# -------------------------------------------------------------------
+echo ""
+echo "[5/6] Staging EKS scale-up demo (observability-demo — high load)..."
+CLUSTER_NAME=$(terraform -chdir="$TERRAFORM_DIR" output -raw cluster_name)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+kubectl config use-context "arn:aws:eks:${REGION}:${ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
+
+CURRENT_REPLICAS=$(kubectl get deployment stress-ng -n demo -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+if [ "$CURRENT_REPLICAS" -lt 8 ]; then
+  echo "  Scaling stress-ng to 8 replicas on $CLUSTER_NAME..."
+  kubectl scale deployment stress-ng -n demo --replicas=8
+  echo "  Waiting for stress-ng pods to be ready..."
+  kubectl wait --for=condition=ready pod -l app=stress-ng -n demo --timeout=180s 2>/dev/null || true
+  echo "  [OK] High load injected on $CLUSTER_NAME"
+else
+  echo "  [OK] stress-ng already at $CURRENT_REPLICAS replicas — skipping"
+fi
+
+# -------------------------------------------------------------------
+# 6. Stage EKS scale-down demo: ensure low load on payments-api
+# -------------------------------------------------------------------
+echo ""
+echo "[6/6] Staging EKS scale-down demo (payments-api — low load)..."
+kubectl config use-context "payments-api" 2>/dev/null || \
+  aws eks update-kubeconfig --region "$REGION" --name "payments-api" --alias "payments-api"
+kubectl config use-context "payments-api"
+
+kubectl --context "payments-api" apply -f "$K8S_DIR/payments-workload/" 2>/dev/null || true
+WORKER_REPLICAS=$(kubectl --context "payments-api" get deployment payments-worker -n payments \
+  -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+if [ "$WORKER_REPLICAS" -gt 1 ]; then
+  echo "  Scaling payments-worker back to 1 replica..."
+  kubectl --context "payments-api" scale deployment payments-worker -n payments --replicas=1
+fi
+echo "  [OK] payments-api has low workload with oversized large-pool"
+
+kubectl config use-context "arn:aws:eks:${REGION}:${ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
+
 echo ""
 if [ "$PASS" = true ]; then
   echo "============================================"
-  echo "  Reset Complete - All resources vulnerable"
+  echo "  Initialization Complete"
   echo "============================================"
 else
   echo "============================================"
-  echo "  Reset Complete - Some checks had warnings"
+  echo "  Initialization Complete (some warnings)"
   echo "============================================"
 fi
-
 echo ""
-echo "Config rule re-evaluation was triggered automatically."
-echo "Compliance findings should reappear in Security Hub within 1-3 minutes."
-echo "GuardDuty sample findings should appear in Security Hub within 1-5 minutes."
+echo "EKS Autoscaling:"
+echo "  - observability-demo: HIGH load (8x stress-ng) — Aiden should ADD a node group"
+echo "  - payments-api: LOW load + oversized large-pool — Aiden should REMOVE the large-pool"
 echo ""
-echo "Run ./scripts/diagnostic/check-findings.sh to monitor."
+echo "Security Remediation:"
+echo "  - Config rule re-evaluation triggered automatically"
+echo "  - Compliance findings should reappear in Security Hub within 1-3 minutes"
+echo "  - GuardDuty sample findings should appear within 1-5 minutes"
+echo ""
+echo "Run ./scripts/diagnostic/check-findings.sh to monitor security findings."
+echo "Run ./scripts/diagnostic/check-utilization.sh to monitor node CPU usage."

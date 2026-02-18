@@ -1,7 +1,13 @@
 # --------------------------------------------------------------------------
-# Dummy EKS clusters – lightweight "healthy" clusters for the demo backdrop.
-# Each runs a single t3.small node with nominal workloads (~35-40% CPU).
-# They share the main VPC to avoid extra NAT gateway costs.
+# payments-api — Scale-down demo cluster.
+# Starts with 2 node groups (small-pool + large-pool). The large-pool is
+# intentionally oversized for the light workload. Aiden detects the
+# underutilization and removes the large-pool.
+#
+# inventory-svc — Dummy "healthy" backdrop cluster.
+# Runs a single t3.small node with nominal workload (~35-40% CPU).
+#
+# Both share the main VPC to avoid extra NAT gateway costs.
 # --------------------------------------------------------------------------
 
 # ----------------------------- payments-api --------------------------------
@@ -26,19 +32,48 @@ module "eks_payments" {
   }
 
   eks_managed_node_groups = {
-    default = {
-      instance_types = ["t3.small"]
+    small-pool = {
+      name           = "small-pool"
+      instance_types = ["t3.medium"]
       capacity_type  = "ON_DEMAND"
-      min_size       = 1
-      max_size       = 1
-      desired_size   = 1
+      min_size       = 2
+      max_size       = 3
+      desired_size   = 2
 
       iam_role_additional_policies = {
         CloudWatchAgentServerPolicy = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
       }
 
       labels = {
+        pool = "small"
         role = "worker"
+      }
+
+      tags = {
+        NodePool = "small-pool"
+      }
+    }
+
+    large-pool = {
+      name           = "large-pool"
+      instance_types = ["t3.xlarge"]
+      capacity_type  = "ON_DEMAND"
+      min_size       = 2
+      max_size       = 3
+      desired_size   = 2
+
+      iam_role_additional_policies = {
+        CloudWatchAgentServerPolicy = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+      }
+
+      labels = {
+        pool = "large"
+        role = "worker"
+      }
+
+      tags = {
+        NodePool  = "large-pool"
+        ManagedBy = "terraform"
       }
     }
   }
