@@ -13,6 +13,7 @@ echo "============================================"
 echo ""
 echo "This will:"
 echo "  - Restore all intentionally misconfigured resources to vulnerable state"
+echo "  - Remove any Aiden-created large-pool from the main cluster"
 echo "  - Archive old findings & regenerate GuardDuty samples"
 echo "  - Stage EKS autoscaling demos (high load on main cluster,"
 echo "    low load on payments-api with oversized large-pool)"
@@ -20,7 +21,7 @@ echo ""
 
 # Re-apply Terraform to restore intentionally vulnerable resources
 # AND recreate the large-pool node group on payments-api if Aiden removed it.
-echo "[1/6] Restoring infrastructure via Terraform..."
+echo "[1/7] Restoring infrastructure via Terraform..."
 terraform -chdir="$TERRAFORM_DIR" apply -auto-approve
 
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
@@ -34,8 +35,51 @@ if ! aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" >/dev/nu
 fi
 echo "  Detected main cluster: $CLUSTER_NAME"
 
+# -------------------------------------------------------------------
+# 2. Remove any Aiden-created large-pool from the main cluster.
+#    Aiden creates node groups via eks:CreateNodegroup which are outside
+#    Terraform state, so terraform apply won't touch them.
+# -------------------------------------------------------------------
 echo ""
-echo "[2/6] Archiving old GuardDuty findings in Security Hub..."
+echo "[2/7] Removing Aiden-created large-pool from $CLUSTER_NAME (if present)..."
+NODEGROUPS=$(aws eks list-nodegroups --cluster-name "$CLUSTER_NAME" --region "$REGION" \
+  --query 'nodegroups' --output json 2>/dev/null || echo "[]")
+
+LARGE_POOL=$(echo "$NODEGROUPS" | python3 -c "
+import sys, json
+ngs = json.load(sys.stdin)
+matches = [ng for ng in ngs if ng.startswith('large-pool')]
+print(matches[0] if matches else '')
+" 2>/dev/null || echo "")
+
+if [ -n "$LARGE_POOL" ]; then
+  echo "  Found Aiden-created node group: $LARGE_POOL — deleting..."
+  aws eks delete-nodegroup \
+    --cluster-name "$CLUSTER_NAME" \
+    --nodegroup-name "$LARGE_POOL" \
+    --region "$REGION" >/dev/null 2>&1
+
+  echo "  Waiting for node group deletion (this may take 2-5 minutes)..."
+  while true; do
+    REMAINING=$(aws eks list-nodegroups --cluster-name "$CLUSTER_NAME" --region "$REGION" \
+      --query 'nodegroups' --output json 2>/dev/null || echo "[]")
+    HAS_LARGE=$(echo "$REMAINING" | python3 -c "
+import sys, json
+ngs = json.load(sys.stdin)
+print('yes' if any(ng.startswith('large-pool') for ng in ngs) else 'no')
+" 2>/dev/null || echo "no")
+    if [ "$HAS_LARGE" = "no" ]; then
+      break
+    fi
+    sleep 15
+  done
+  echo "  [OK] large-pool removed from $CLUSTER_NAME"
+else
+  echo "  [OK] No large-pool found on $CLUSTER_NAME — skipping"
+fi
+
+echo ""
+echo "[3/7] Archiving old GuardDuty findings in Security Hub..."
 OLD_FINDINGS=$(aws securityhub get-findings --region "$REGION" \
   --filters '{
     "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
@@ -63,7 +107,7 @@ else
 fi
 
 echo ""
-echo "[3/6] Generating fresh GuardDuty sample findings..."
+echo "[4/7] Generating fresh GuardDuty sample findings..."
 aws guardduty create-sample-findings \
   --detector-id "$DETECTOR_ID" \
   --finding-types \
@@ -79,7 +123,7 @@ aws guardduty create-sample-findings \
 echo "  Generated 8 sample GuardDuty findings."
 
 echo ""
-echo "[4/6] Verifying vulnerable state..."
+echo "[5/7] Verifying vulnerable state..."
 
 SG_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_sg_id)
 BUCKET=$(terraform -chdir="$TERRAFORM_DIR" output -raw vulnerable_bucket)
@@ -133,10 +177,10 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 5. Stage EKS scale-up demo: inject high load on main cluster
+# 6. Stage EKS scale-up demo: inject high load on main cluster
 # -------------------------------------------------------------------
 echo ""
-echo "[5/6] Staging EKS scale-up demo ($CLUSTER_NAME — high load)..."
+echo "[6/7] Staging EKS scale-up demo ($CLUSTER_NAME — high load)..."
 kubectl config use-context "arn:aws:eks:${REGION}:${ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
 
 CURRENT_REPLICAS=$(kubectl get deployment stress-ng -n demo -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
@@ -151,10 +195,10 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 6. Stage EKS scale-down demo: ensure low load on payments-api
+# 7. Stage EKS scale-down demo: ensure low load on payments-api
 # -------------------------------------------------------------------
 echo ""
-echo "[6/6] Staging EKS scale-down demo (payments-api — low load)..."
+echo "[7/7] Staging EKS scale-down demo (payments-api — low load)..."
 kubectl config use-context "payments-api" 2>/dev/null || \
   aws eks update-kubeconfig --region "$REGION" --name "payments-api" --alias "payments-api"
 kubectl config use-context "payments-api"
