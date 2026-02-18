@@ -6,7 +6,7 @@ set -euo pipefail
 # Findings are labeled [SAMPLE] in the GuardDuty console.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region 2>/dev/null || echo "us-west-2")
@@ -60,6 +60,6 @@ echo ""
 echo "2. Findings flow to Security Hub within 1-5 minutes:"
 echo "   https://${REGION}.console.aws.amazon.com/securityhub/home?region=${REGION}#/findings"
 echo ""
-echo "3. Run ./scripts/check-findings.sh to monitor Security Hub findings."
+echo "3. Run ./scripts/diagnostic/check-findings.sh to monitor Security Hub findings."
 echo ""
 echo "Note: Sample findings are labeled [SAMPLE] in the GuardDuty console."

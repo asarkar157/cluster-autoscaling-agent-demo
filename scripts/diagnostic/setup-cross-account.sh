@@ -9,12 +9,12 @@ set -euo pipefail
 # cross-account inventory scanning.
 #
 # Usage:
-#   ./scripts/setup-cross-account.sh                          # uses default profile
-#   ./scripts/setup-cross-account.sh --profile my-other-acct  # uses named profile
+#   ./scripts/diagnostic/setup-cross-account.sh                          # uses default profile
+#   ./scripts/diagnostic/setup-cross-account.sh --profile my-other-acct  # uses named profile
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CF_TEMPLATE="$REPO_ROOT/iam/cross-account-inventory-role.yaml"
 
 STACK_NAME="aiden-inventory-role"

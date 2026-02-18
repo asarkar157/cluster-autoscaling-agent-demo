@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Show active Security Hub findings for demo resources.
-# Can be run in a loop with: watch -n 30 ./scripts/check-findings.sh
+# Can be run in a loop with: watch -n 30 ./scripts/diagnostic/check-findings.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region 2>/dev/null || echo "us-west-2")

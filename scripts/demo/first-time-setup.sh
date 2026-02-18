@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 K8S_DIR="$ROOT_DIR/kubernetes"
 
@@ -90,6 +90,6 @@ echo "Current pod status (main cluster):"
 kubectl get pods -n demo -o wide
 echo ""
 echo "Next steps:"
-echo "  1. Run ./scripts/check-utilization.sh to monitor node usage"
-echo "  2. Run ./scripts/load-up.sh to overutilize the nodes"
+echo "  1. Run ./scripts/diagnostic/check-utilization.sh to monitor node usage"
+echo "  2. Run ./scripts/demo/load-up.sh to overutilize the nodes"
 echo "  3. Aiden will detect the overutilization and scale up"

@@ -9,11 +9,11 @@ set -euo pipefail
 # findings with real resource IDs and can execute actual remediations.
 #
 # Usage:
-#   ./scripts/send-security-alert.sh
+#   ./scripts/demo/send-security-alert.sh
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 
 WEBHOOK_URL="https://aiden.stackgen.com/api/v1/tasks/6414e304-36d5-4fe7-a661-f1473ed21158/webhook"

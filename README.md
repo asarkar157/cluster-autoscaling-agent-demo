@@ -71,7 +71,7 @@ aws configure
 ### 3. Deploy the infrastructure and workloads
 
 ```bash
-./scripts/setup.sh
+./scripts/demo/first-time-setup.sh
 ```
 
 This will:
@@ -85,13 +85,13 @@ Setup takes approximately 15-20 minutes.
 ### 4. Monitor utilization (in a separate terminal)
 
 ```bash
-./scripts/check-utilization.sh
+./scripts/diagnostic/check-utilization.sh
 ```
 
 ### 5. Inject load to overutilize nodes
 
 ```bash
-./scripts/load-up.sh
+./scripts/demo/load-up.sh
 ```
 
 This scales stress-ng to 6 replicas. With the resource requests, this pushes the 2x `t3.medium` nodes
@@ -106,7 +106,7 @@ and Pending pods get scheduled.
 ### 7. Reduce load
 
 ```bash
-./scripts/load-down.sh
+./scripts/demo/load-down.sh
 ```
 
 This scales stress-ng back to 1 replica, dropping utilization across all nodes.
@@ -118,7 +118,7 @@ Aiden detects the low utilization and deactivates the larger node group, reattac
 ### 9. Tear down
 
 ```bash
-./scripts/teardown.sh
+./scripts/demo/teardown.sh
 ```
 
 This destroys all Kubernetes resources and the Terraform-managed infrastructure.
@@ -162,17 +162,17 @@ automatically generates real findings for these resources. Aiden detects and rem
 
 1. `terraform apply` provisions GuardDuty, Security Hub, and the misconfigured resources
 2. Security Hub runs its first standards check (~5-15 min on initial setup)
-3. `./scripts/check-findings.sh` shows active failed findings
+3. `./scripts/diagnostic/check-findings.sh` shows active failed findings
 4. View findings in the Security Hub console
 5. Aiden scans the account, detects findings, and auto-remediates
-6. `./scripts/check-findings.sh` shows findings resolved
+6. `./scripts/diagnostic/check-findings.sh` shows findings resolved
 
 ### Resetting for the Next Demo Run
 
 After Aiden remediates, run:
 
 ```bash
-./scripts/reset-demo.sh
+./scripts/demo/initialize-demo.sh
 ```
 
 This runs `terraform apply` to revert Aiden's remediations (which appear as Terraform drift)
@@ -181,13 +181,13 @@ and automatically triggers AWS Config rule re-evaluation so findings reappear wi
 ### Check Findings
 
 ```bash
-./scripts/check-findings.sh
+./scripts/diagnostic/check-findings.sh
 ```
 
 Shows active failed Security Hub findings for the demo resources. Can also be run in a loop:
 
 ```bash
-watch -n 30 ./scripts/check-findings.sh
+watch -n 30 ./scripts/diagnostic/check-findings.sh
 ```
 
 ### Security Hub Console
@@ -228,11 +228,11 @@ Before running the inventory skill, deploy the cross-account IAM role in each se
 ```bash
 # Account 347161580392
 aws sso login --profile <account-347-profile>
-./scripts/setup-cross-account.sh --profile <account-347-profile>
+./scripts/diagnostic/setup-cross-account.sh --profile <account-347-profile>
 
 # Account 339712749745
 aws sso login --profile <account-339-profile>
-./scripts/setup-cross-account.sh --profile <account-339-profile>
+./scripts/diagnostic/setup-cross-account.sh --profile <account-339-profile>
 ```
 
 This creates an `aiden-inventory-role` in each secondary account with:
@@ -301,15 +301,19 @@ observability-demo/
 │   ├── security-finding-remediation.md # Security Hub remediation skill
 │   └── cloud-inventory-management.md   # Multi-account inventory skill
 ├── scripts/
-│   ├── setup.sh                        # Full setup automation
-│   ├── teardown.sh                     # Full teardown
-│   ├── load-up.sh                      # Scale stress pods up
-│   ├── load-down.sh                    # Scale stress pods down
-│   ├── check-utilization.sh            # Live utilization monitor
-│   ├── check-findings.sh              # View Security Hub findings
-│   ├── reset-demo.sh                  # Reset security demo state
-│   ├── generate-guardduty-findings.sh # Generate sample GuardDuty findings
-│   └── setup-cross-account.sh         # Deploy cross-account inventory role
+│   ├── demo/
+│   │   ├── first-time-setup.sh         # One-time infrastructure provisioning
+│   │   ├── teardown.sh                 # Full teardown
+│   │   ├── initialize-demo.sh          # Reset vulnerable state before each demo
+│   │   ├── send-security-alert.sh      # Trigger Aiden security remediation webhook
+│   │   ├── load-up.sh                  # Scale stress pods up
+│   │   └── load-down.sh               # Scale stress pods down
+│   └── diagnostic/
+│       ├── check-findings.sh           # View Security Hub findings
+│       ├── check-utilization.sh        # Live utilization monitor
+│       ├── generate-guardduty-findings.sh  # Generate sample GuardDuty findings
+│       ├── scan-account.sh             # Helper for cloud inventory skill
+│       └── setup-cross-account.sh      # Deploy cross-account inventory role
 └── monitoring/
     ├── grafana-dashboard.json          # Node utilization dashboard
     └── prometheus-values.yaml          # Prometheus + Grafana Helm values

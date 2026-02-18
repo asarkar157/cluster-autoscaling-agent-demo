@@ -8,8 +8,8 @@ set -euo pipefail
 # Handles cross-account role assumption internally when a role ARN is provided.
 #
 # Usage:
-#   ./scripts/scan-account.sh                                          # scan current account
-#   ./scripts/scan-account.sh --role-arn arn:aws:iam::XXXX:role/NAME   # assume role first
+#   ./scripts/diagnostic/scan-account.sh                                          # scan current account
+#   ./scripts/diagnostic/scan-account.sh --role-arn arn:aws:iam::XXXX:role/NAME   # assume role first
 # ---------------------------------------------------------------------------
 
 REGION="us-west-2"

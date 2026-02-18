@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 
 echo "============================================"
@@ -140,4 +140,4 @@ echo "Config rule re-evaluation was triggered automatically."
 echo "Compliance findings should reappear in Security Hub within 1-3 minutes."
 echo "GuardDuty sample findings should appear in Security Hub within 1-5 minutes."
 echo ""
-echo "Run ./scripts/check-findings.sh to monitor."
+echo "Run ./scripts/diagnostic/check-findings.sh to monitor."
