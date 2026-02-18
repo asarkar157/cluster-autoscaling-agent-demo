@@ -14,7 +14,7 @@ echo ""
 echo "This will:"
 echo "  - Restore all intentionally misconfigured resources to vulnerable state"
 echo "  - Archive old findings & regenerate GuardDuty samples"
-echo "  - Stage EKS autoscaling demos (high load on observability-demo,"
+echo "  - Stage EKS autoscaling demos (high load on main cluster,"
 echo "    low load on payments-api with oversized large-pool)"
 echo ""
 
@@ -24,7 +24,15 @@ echo "[1/6] Restoring infrastructure via Terraform..."
 terraform -chdir="$TERRAFORM_DIR" apply -auto-approve
 
 REGION=$(terraform -chdir="$TERRAFORM_DIR" output -raw region)
+CLUSTER_NAME=$(terraform -chdir="$TERRAFORM_DIR" output -raw cluster_name)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 DETECTOR_ID=$(terraform -chdir="$TERRAFORM_DIR" output -raw guardduty_detector_id)
+
+if ! aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" >/dev/null 2>&1; then
+  echo "ERROR: Main cluster '$CLUSTER_NAME' not found in $REGION. Was it provisioned?"
+  exit 1
+fi
+echo "  Detected main cluster: $CLUSTER_NAME"
 
 echo ""
 echo "[2/6] Archiving old GuardDuty findings in Security Hub..."
@@ -125,12 +133,10 @@ else
 fi
 
 # -------------------------------------------------------------------
-# 5. Stage EKS scale-up demo: inject high load on observability-demo
+# 5. Stage EKS scale-up demo: inject high load on main cluster
 # -------------------------------------------------------------------
 echo ""
-echo "[5/6] Staging EKS scale-up demo (observability-demo — high load)..."
-CLUSTER_NAME=$(terraform -chdir="$TERRAFORM_DIR" output -raw cluster_name)
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+echo "[5/6] Staging EKS scale-up demo ($CLUSTER_NAME — high load)..."
 kubectl config use-context "arn:aws:eks:${REGION}:${ACCOUNT_ID}:cluster/${CLUSTER_NAME}"
 
 CURRENT_REPLICAS=$(kubectl get deployment stress-ng -n demo -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
@@ -176,7 +182,7 @@ else
 fi
 echo ""
 echo "EKS Autoscaling:"
-echo "  - observability-demo: HIGH load (8x stress-ng) — Aiden should ADD a node group"
+echo "  - $CLUSTER_NAME: HIGH load (8x stress-ng) — Aiden should ADD a node group"
 echo "  - payments-api: LOW load + oversized large-pool — Aiden should REMOVE the large-pool"
 echo ""
 echo "Security Remediation:"

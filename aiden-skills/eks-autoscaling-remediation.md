@@ -80,13 +80,21 @@ The EKS managed node groups in this cluster have auto-generated suffixes appende
 
 ## Detection
 
+**IMPORTANT**: Apply these detection rules to EVERY remediation-eligible cluster (`observability-demo` AND `payments-api`). Do NOT skip any cluster. Evaluate each cluster independently against BOTH the overutilization AND underutilization criteria below.
+
+### Cluster-to-Namespace Mapping
+
+When checking pod status, use the correct namespace for each cluster:
+- `observability-demo` — check the `demo` namespace
+- `payments-api` — check the `payments` namespace
+
 ### Overutilization Indicators
 
-Scan the AWS account and check for ALL of the following signals. If ANY are present, the cluster is overutilized:
+For each remediation-eligible cluster, check for ALL of the following signals. If ANY are present, the cluster is overutilized:
 
-1. **Node CPU utilization above 80%**: Query CloudWatch Container Insights metrics for the `observability-demo` cluster. Check the `node_cpu_utilization` metric. If the average across nodes exceeds 80% sustained over 5 minutes, the cluster is overutilized.
+1. **Node CPU utilization above 80%**: Query CloudWatch Container Insights metrics for the cluster (dimension `ClusterName`). Check the `node_cpu_utilization` metric. If the average across nodes exceeds 80% sustained over 5 minutes, the cluster is overutilized.
 
-2. **Pods in Pending state**: Query the Kubernetes API or CloudWatch for pods in the `demo` namespace with status `Pending`. Pending pods indicate the scheduler cannot find a node with enough resources. Any Pending pods that have been waiting for more than 2 minutes confirm overutilization.
+2. **Pods in Pending state**: Query the Kubernetes API or CloudWatch for pods in the cluster's namespace (see mapping above) with status `Pending`. Pending pods indicate the scheduler cannot find a node with enough resources. Any Pending pods that have been waiting for more than 2 minutes confirm overutilization.
 
 3. **Node memory utilization above 75%**: Check `node_memory_utilization` in Container Insights. If average memory across nodes exceeds 75%, the cluster is under memory pressure.
 
@@ -94,15 +102,17 @@ Scan the AWS account and check for ALL of the following signals. If ANY are pres
 
 ### Underutilization Indicators
 
-Check for ALL of the following signals. ALL must be true to confirm underutilization:
+For each remediation-eligible cluster, check for ALL of the following signals. ALL must be true to confirm underutilization:
 
-1. **Node CPU utilization below 30%**: Average CPU across ALL nodes in the cluster is below 30% sustained over 10 minutes.
+1. **Node CPU utilization below 30%**: Average CPU across ALL nodes in the cluster is below 30% sustained over 5 minutes.
 
-2. **No Pending pods**: Zero pods in `Pending` state across all namespaces.
+2. **No Pending pods**: Zero pods in `Pending` state in the cluster's namespace (see mapping above).
 
-3. **Multiple node groups active**: Call `eks:ListNodegroups` and check if there is more than one node group. If a node group name starting with `large-pool` exists alongside one starting with `small-pool`, the cluster has been scaled up previously.
+3. **Multiple node groups active**: Call `eks:ListNodegroups` and check if there is more than one node group. If a node group name starting with `large-pool` exists alongside one starting with `small-pool`, the cluster is a candidate for scale-down.
 
 4. **Workloads can fit on smaller pool**: Call `eks:DescribeNodegroup` on the `small-pool-*` node group (using its full name from ListNodegroups) to get its instance types and desired size. Calculate allocatable capacity and compare against total pod resource requests.
+
+**NOTE on `payments-api`**: This cluster is provisioned with BOTH a `small-pool` and a `large-pool` node group by Terraform. The large-pool node group name will have a Terraform-generated suffix (e.g. `large-pool-2026...`), just like the small-pool. When you see `payments-api` has 2+ node groups and low CPU, it IS underutilized and the `large-pool-*` node group MUST be deleted.
 
 ## Remediation Actions
 
@@ -153,7 +163,7 @@ Perform the following steps in order:
 
 5. **Verify cluster health**: After deletion completes, confirm:
    - Only the `small-pool-*` node group remains (call `eks:ListNodegroups`)
-   - All pods in the `demo` namespace are `Running` (zero `Pending`)
+   - All pods in the cluster's workload namespace are `Running` (zero `Pending`) — use `demo` for observability-demo, `payments` for payments-api
    - Node CPU utilization is at a healthy level
 
 **IMPORTANT**: Do not skip step 3. When you detect underutilization and a `large-pool` node group exists, you must call `eks:DeleteNodegroup` to remove it. Simply reporting the underutilization without taking action is not sufficient.
@@ -162,10 +172,10 @@ Perform the following steps in order:
 
 This is the ONLY phase where you output anything to the user. Everything above must have been executed silently. Now produce a SINGLE report that covers what you scanned AND what you did.
 
-After any remediation action, verify the following before producing the report:
+After any remediation action, verify the following for EACH remediated cluster before producing the report:
 
 - [ ] All nodes report `Ready` status
-- [ ] All pods in the `demo` namespace are `Running` (zero `Pending`)
+- [ ] All pods in the cluster's workload namespace are `Running` (zero `Pending`) — `demo` for observability-demo, `payments` for payments-api
 - [ ] Node CPU utilization is between 20% and 80%
 - [ ] CloudWatch Container Insights shows updated node count
 
