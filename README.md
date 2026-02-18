@@ -1,8 +1,11 @@
 # Observability & Security Remediation Demo with Aiden
 
 A demo environment that shows Aiden by StackGen automatically:
-1. **Detecting and remediating EKS node pool overutilization** -- scaling node groups up/down
-2. **Detecting and remediating security misconfigurations** -- fixing findings from AWS Security Hub
+1. **Detecting and remediating EKS node pool overutilization** -- scaling node groups up/down (complete)
+2. **Detecting and remediating security misconfigurations** -- fixing findings from AWS Security Hub (complete)
+3. **Cloud asset inventory management** -- multi-account resource scanning (incomplete, non-functional in Aiden)
+
+> **Note:** Parts 1 and 2 are fully functional end-to-end demos. Part 3 (Cloud Inventory) has the infrastructure and skill definition in place, but the Aiden integration is incomplete and not yet operational.
 
 ## Architecture
 
@@ -197,7 +200,9 @@ View findings at:
 
 ---
 
-## Part 3: Cloud Asset Inventory Management
+## Part 3: Cloud Asset Inventory Management (Incomplete)
+
+> **Status:** The infrastructure (cross-account IAM roles, policies, scripts) and Aiden skill definition are in place, but the Aiden integration is incomplete and non-functional. This section is not demo-ready.
 
 ### Overview
 
