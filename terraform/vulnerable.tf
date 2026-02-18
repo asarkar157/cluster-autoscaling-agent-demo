@@ -5,18 +5,26 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# a) Open Security Group -- SSH open to 0.0.0.0/0
-#    Security Hub finding: EC2.18
+# a) Open Security Group -- SSH + RDP open to 0.0.0.0/0
+#    Security Hub findings: EC2.18 (SSH), EC2.19 (RDP)
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "vulnerable_ssh" {
   name        = "demo-vulnerable-ssh-open"
-  description = "DEMO: SSH open to world - for Aiden remediation"
+  description = "DEMO: SSH and RDP open to world - for Aiden remediation"
   vpc_id      = module.vpc.vpc_id
 
   ingress {
     description = "SSH from anywhere (intentionally vulnerable)"
     from_port   = 22
     to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "RDP from anywhere (intentionally vulnerable)"
+    from_port   = 3389
+    to_port     = 3389
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -101,6 +109,84 @@ resource "aws_iam_role_policy_attachment" "vulnerable_admin" {
 }
 
 # -----------------------------------------------------------------------------
+# e) EC2 Instance 1 -- Open SSH SG + no IMDSv2
+#    Security Hub finding: EC2.8
+# -----------------------------------------------------------------------------
+data "aws_ami" "amazon_linux_2" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+resource "aws_instance" "vulnerable_ssh_instance" {
+  ami                    = data.aws_ami.amazon_linux_2.id
+  instance_type          = "t2.micro"
+  subnet_id              = module.vpc.private_subnets[0]
+  vpc_security_group_ids = [aws_security_group.vulnerable_ssh.id]
+
+  metadata_options {
+    http_tokens   = "optional"
+    http_endpoint = "enabled"
+  }
+
+  tags = {
+    Name    = "demo-vulnerable-ssh-instance"
+    Purpose = "security-demo"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# f) EC2 Instance 2 -- Public IP + overpermissive IAM role + no IMDSv2
+#    Security Hub finding: EC2.8
+# -----------------------------------------------------------------------------
+resource "aws_iam_instance_profile" "vulnerable_admin" {
+  name = "demo-vulnerable-overpermissive-profile"
+  role = aws_iam_role.vulnerable_admin.name
+}
+
+resource "aws_instance" "vulnerable_public_instance" {
+  ami                         = data.aws_ami.amazon_linux_2.id
+  instance_type               = "t2.micro"
+  subnet_id                   = module.vpc.public_subnets[0]
+  vpc_security_group_ids      = [aws_security_group.vulnerable_ssh.id]
+  iam_instance_profile        = aws_iam_instance_profile.vulnerable_admin.name
+  associate_public_ip_address = true
+
+  metadata_options {
+    http_tokens   = "optional"
+    http_endpoint = "enabled"
+  }
+
+  tags = {
+    Name    = "demo-vulnerable-public-instance"
+    Purpose = "security-demo"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# g) S3 Bucket 2 -- No versioning + no encryption
+#    Security Hub findings: S3.4, S3.11
+# -----------------------------------------------------------------------------
+resource "aws_s3_bucket" "vulnerable_no_encrypt" {
+  bucket        = "${var.cluster_name}-demo-vulnerable-noencrypt"
+  force_destroy = true
+
+  tags = {
+    Name    = "${var.cluster_name}-demo-vulnerable-noencrypt"
+    Purpose = "security-demo"
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Auto Config Re-evaluation
 # Runs at the end of every `terraform apply` to trigger immediate re-scan
 # of Security Hub Config rules, so findings reappear within 1-3 minutes
@@ -130,6 +216,9 @@ resource "terraform_data" "trigger_config_evaluation" {
     aws_s3_bucket_public_access_block.vulnerable_public,
     aws_ebs_volume.vulnerable_unencrypted,
     aws_iam_role_policy_attachment.vulnerable_admin,
+    aws_instance.vulnerable_ssh_instance,
+    aws_instance.vulnerable_public_instance,
+    aws_s3_bucket.vulnerable_no_encrypt,
     aws_securityhub_standards_subscription.aws_foundational,
   ]
 }

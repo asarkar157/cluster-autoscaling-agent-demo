@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Creates an IAM role in this account that allows the aiden-demo user
+  from the primary account (180217099948) to assume it for read-only
+  cloud inventory scanning.
+
+Parameters:
+  TrustedAccountId:
+    Type: String
+    Default: "180217099948"
+    Description: AWS account ID where the aiden-demo user lives
+  TrustedUserName:
+    Type: String
+    Default: "aiden-demo"
+    Description: IAM user name in the trusted account that will assume this role
+  RoleName:
+    Type: String
+    Default: "aiden-inventory-role"
+    Description: Name of the cross-account inventory role to create
+
+Resources:
+  AidenInventoryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${TrustedAccountId}:user/${TrustedUserName}"
+            Action: "sts:AssumeRole"
+      MaxSessionDuration: 3600
+      Tags:
+        - Key: Purpose
+          Value: cross-account-inventory
+        - Key: ManagedBy
+          Value: aiden-demo
+
+  AidenInventoryPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AidenInventoryReadOnly
+      Roles:
+        - !Ref AidenInventoryRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EC2ReadOnly
+            Effect: Allow
+            Action:
+              - "ec2:DescribeInstances"
+              - "ec2:DescribeVolumes"
+              - "ec2:DescribeVpcs"
+              - "ec2:DescribeSubnets"
+              - "ec2:DescribeSecurityGroups"
+              - "ec2:DescribeImages"
+              - "ec2:DescribeAddresses"
+              - "ec2:DescribeNatGateways"
+              - "ec2:DescribeInternetGateways"
+            Resource: "*"
+          - Sid: EKSReadOnly
+            Effect: Allow
+            Action:
+              - "eks:ListClusters"
+              - "eks:DescribeCluster"
+              - "eks:ListNodegroups"
+              - "eks:DescribeNodegroup"
+            Resource: "*"
+          - Sid: ELBReadOnly
+            Effect: Allow
+            Action:
+              - "elasticloadbalancing:DescribeLoadBalancers"
+              - "elasticloadbalancing:DescribeTargetGroups"
+              - "elasticloadbalancing:DescribeListeners"
+            Resource: "*"
+          - Sid: S3ReadOnly
+            Effect: Allow
+            Action:
+              - "s3:ListAllMyBuckets"
+              - "s3:GetBucketLocation"
+              - "s3:GetBucketTagging"
+            Resource: "*"
+          - Sid: RDSReadOnly
+            Effect: Allow
+            Action:
+              - "rds:DescribeDBInstances"
+              - "rds:DescribeDBClusters"
+              - "rds:ListTagsForResource"
+            Resource: "*"
+          - Sid: LambdaReadOnly
+            Effect: Allow
+            Action:
+              - "lambda:ListFunctions"
+              - "lambda:GetFunction"
+            Resource: "*"
+          - Sid: IAMReadOnly
+            Effect: Allow
+            Action:
+              - "iam:ListRoles"
+              - "iam:ListUsers"
+            Resource: "*"
+          - Sid: STSIdentity
+            Effect: Allow
+            Action:
+              - "sts:GetCallerIdentity"
+            Resource: "*"
+          - Sid: TagDiscovery
+            Effect: Allow
+            Action:
+              - "tag:GetResources"
+            Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: ARN of the cross-account inventory role (use this in the primary account)
+    Value: !GetAtt AidenInventoryRole.Arn
+  RoleName:
+    Description: Name of the cross-account inventory role
+    Value: !Ref AidenInventoryRole
+  AssumeRoleCommand:
+    Description: Example CLI command for the aiden-demo user to assume this role
+    Value: !Sub >
+      aws sts assume-role
+      --role-arn arn:aws:iam::${AWS::AccountId}:role/${RoleName}
+      --role-session-name aiden-inventory-scan
+      --external-id aiden-inventory-scan
+      --duration-seconds 3600

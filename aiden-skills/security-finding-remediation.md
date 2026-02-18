@@ -2,103 +2,101 @@
 
 ## CRITICAL INSTRUCTION — READ THIS FIRST
 
-This skill MUST be executed as a SINGLE atomic operation. You must complete ALL phases — scanning, remediating, investigating, and resolving — before you produce ANY output to the user. Do not send partial results. Do not send a summary and then promise to continue. Your response to the user must be ONE message that contains the complete results of everything you did.
+This skill MUST be executed as a SINGLE atomic operation. You must parse the webhook payload, execute ALL remediations, and verify them before producing ANY output to the user. Do not send partial results. Do not send a summary and then promise to continue. Your response to the user must be ONE message that contains the complete results of everything you did.
 
 Rules:
-1. Do NOT output anything to the user until ALL work is done.
+1. Do NOT output anything to the user until ALL remediations are done.
 2. Do NOT say "proceeding to..." or "I will now..." — just DO it silently.
 3. Do NOT ask for confirmation at any point.
-4. Do NOT stop after scanning — you must also execute all fixes.
+4. Do NOT stop after reading the findings — you MUST execute the actual AWS API calls to fix every vulnerability.
 5. Do NOT split your work across multiple messages. ONE response only.
-6. Execute every API call in this skill, collect the results, then present ONE final report.
+6. Do NOT query AWS Security Hub or GuardDuty — the webhook payload IS your findings data. Trust it.
+7. Execute every remediation API call, collect the results, then present ONE final report.
 
 ## Objective
 
-Scan AWS Security Hub for compliance findings and GuardDuty threat detections. Remediate every compliance misconfiguration and investigate/resolve every GuardDuty threat. Then present a single combined report showing what was found and what was done.
+Receive a security alert payload containing findings about vulnerable AWS resources. Remediate every finding by executing the actual AWS API calls against the real resource IDs in the payload. Then present a single combined report showing what was found and what was done.
 
 ## Target Environment
 
 - **AWS Region**: us-west-2
 - **AWS Account**: The account running the `observability-demo` EKS cluster
-- **Security Hub**: Enabled with AWS Foundational Security Best Practices v1.0.0 standard
-- **GuardDuty**: Enabled with S3 and Kubernetes audit log data sources
-- **Resources to monitor**: All resources tagged with `Purpose=security-demo`, plus all GuardDuty findings
+- **Resources**: All resources referenced in the webhook payload — these are real AWS resources with real IDs
 
 ---
 
-## Phase 1: Scan Findings (do NOT output anything yet)
+## Phase 1: Parse Findings from Webhook Payload (do NOT output anything yet)
 
-Gather all findings silently. Do NOT produce any output to the user during this phase.
+The webhook payload that triggered this skill contains a `findings` array. This IS your source of truth. Do NOT query AWS Security Hub or GuardDuty — the payload already contains all the findings you need to act on.
 
 ### Steps
 
-1. **Query compliance findings for demo resources ONLY**. You MUST filter by the `Purpose=security-demo` resource tag to exclude unrelated account-level findings (like Config.1, CloudWatch alarms). Use this exact API call:
+1. **Parse the `findings` array** from the webhook payload. Each finding has these fields:
+   - `id` — unique finding identifier
+   - `type` — the control ID (e.g., `EC2.18`, `S3.4`, `IAM.1`)
+   - `severity` — CRITICAL, HIGH, MEDIUM, or LOW
+   - `title` — human-readable title
+   - `description` — detailed description of the vulnerability
+   - `resource_type` — AWS resource type (e.g., `AWS::EC2::SecurityGroup`)
+   - `resource_id` — the **real AWS resource ID** to remediate (e.g., `sg-0f39...`, `i-090e...`)
+   - `remediation` — suggested remediation action
 
-   ```
-   aws securityhub get-findings --region us-west-2 \
-     --filters '{
-       "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
-       "ComplianceStatus":[{"Value":"FAILED","Comparison":"EQUALS"}],
-       "ResourceTags":[{"Key":"Purpose","Value":"security-demo","Comparison":"EQUALS"}]
-     }'
-   ```
+2. **Save the findings internally** — note each finding's type, severity, and resource ID. Do NOT output anything to the user yet.
 
-   IMPORTANT: You MUST include the `ResourceTags` filter. Without it, you will get dozens of irrelevant account-level findings. The only findings you should see are for these specific resources:
-   - Security group `demo-vulnerable-ssh-open` (EC2.18 / EC2.19)
-   - S3 bucket `observability-demo-demo-vulnerable-public` (S3.1 / S3.8)
-   - EBS volume (EC2.3)
-   - IAM role `demo-vulnerable-overpermissive` (IAM.1)
+3. **If the payload has zero findings**, skip to Phase 3 and report a clean posture.
 
-   If you see findings for Config.1, CloudWatch.*, or other account-level controls, your filter is wrong. Re-run with the exact filter above.
-
-2. **Query GuardDuty findings**. Use this exact API call:
-
-   ```
-   aws securityhub get-findings --region us-west-2 \
-     --filters '{
-       "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
-       "ProductName":[{"Value":"GuardDuty","Comparison":"EQUALS"}]
-     }'
-   ```
-
-   Do NOT add `ComplianceStatus` or `WorkflowStatus` filters for GuardDuty — they don't use compliance status, and their workflow status varies.
-
-3. **Save the results internally** — note which compliance findings and GuardDuty findings were found. Do NOT output anything to the user yet.
-
-4. **If no findings exist at all** (zero compliance AND zero GuardDuty), skip to Phase 4 and report a clean posture.
-
-5. **If any findings exist**, proceed SILENTLY to Phase 2 and Phase 3. Do NOT output a summary yet — you will include everything in the final Phase 4 report.
+4. **If any findings exist**, proceed SILENTLY to Phase 2. Do NOT output a summary yet — you will include everything in the Phase 3 report.
 
 ---
 
-## Phase 2: Compliance Remediation (execute silently, do NOT output yet)
+## Phase 2: Execute Remediations (execute silently, do NOT output yet)
 
-Execute every remediation step below by calling the actual AWS APIs. Do not skip any step. Do not output anything to the user yet — save the results for the final report in Phase 4.
+For each finding from the webhook payload, execute the corresponding AWS API calls below. Do not skip any finding. Do not output anything to the user yet — save the results for the final report in Phase 3.
 
-### How to Find Compliance Findings
+### How to Process Each Finding
 
-Use the SAME query from Phase 1 (with the `Purpose=security-demo` tag filter). For each finding:
+1. **Match the finding's `type` field** to the remediation action below (e.g., `EC2.18`, `S3.4`, `IAM.1`).
 
-1. **Identify finding type**: Each finding has a `GeneratorId` that maps to a specific Security Hub control (e.g., `aws-foundational-security-best-practices/v/1.0.0/EC2.18`). Match the control ID to the remediation action below.
+2. **Use the finding's `resource_id` field** as the target for the AWS API call. These are real resource IDs — the API calls will work.
 
-2. **Extract the affected resource**: Each finding contains a `Resources` array with the ARN/ID of the affected AWS resource. Use this to target the remediation API calls.
-
-3. **Execute the fix immediately**: For each finding, run the corresponding remediation steps below. Do NOT batch them — fix one, mark it resolved, then move to the next.
+3. **Execute the fix immediately**: For each finding, run the corresponding remediation steps below. Do NOT batch them — fix one, then move to the next.
 
 ### Compliance Findings to Remediate
 
 | Control ID | Title | Severity | Resource Type |
 |-----------|-------|----------|---------------|
+| EC2.8 | EC2 instances should use Instance Metadata Service Version 2 (IMDSv2) | HIGH | `AWS::EC2::Instance` |
 | EC2.18 | Security groups should only allow unrestricted incoming traffic for authorized ports | HIGH | `AWS::EC2::SecurityGroup` |
 | EC2.19 | Security groups should not allow unrestricted access to high-risk ports | CRITICAL | `AWS::EC2::SecurityGroup` |
 | S3.1 | S3 general purpose buckets should have block public access settings enabled | MEDIUM | `AWS::S3::Bucket` |
+| S3.4 | S3 buckets should have server-side encryption enabled | MEDIUM | `AWS::S3::Bucket` |
 | S3.8 | S3 general purpose buckets should block public access | HIGH | `AWS::S3::Bucket` |
+| S3.11 | S3 buckets should have versioning enabled | LOW | `AWS::S3::Bucket` |
 | EC2.3 | Attached EBS volumes should be encrypted at rest | MEDIUM | `AWS::EC2::Volume` |
 | IAM.1 | IAM policies should not allow full "*" administrative privileges | HIGH | `AWS::IAM::Role` |
 
 ## Remediation Actions
 
-For EACH finding below, execute the AWS API calls immediately. After fixing each one, call `securityhub:BatchUpdateFindings` to mark it RESOLVED before moving to the next finding.
+For EACH finding below, execute the AWS API calls immediately. Fix one, verify it, then move to the next.
+
+### EC2.8 — IMDSv2 Not Enforced
+
+**Problem**: An EC2 instance has Instance Metadata Service v1 enabled (`http_tokens = optional`), allowing SSRF attacks to steal instance credentials.
+
+**Steps**:
+
+1. **Identify the instance**: Use the `resource_id` from the finding (e.g., `i-090e7735ddb600e97`).
+
+2. **Enforce IMDSv2**:
+   ```
+   aws ec2 modify-instance-metadata-options \
+     --instance-id <instance-id> \
+     --http-tokens required \
+     --http-endpoint enabled \
+     --region us-west-2
+   ```
+
+3. **Verify**: Call `ec2:DescribeInstances` and confirm `MetadataOptions.HttpTokens` is `required`.
 
 ### EC2.18 / EC2.19 — Open Security Group
 
@@ -106,9 +104,9 @@ For EACH finding below, execute the AWS API calls immediately. After fixing each
 
 **Steps**:
 
-1. **Identify the security group**: Extract the security group ID from the finding's `Resources[0].Id` field.
+1. **Identify the security group**: Use the `resource_id` from the finding (e.g., `sg-0f39f362b89f0dc98`).
 
-2. **Find the offending rule**: Call `ec2:DescribeSecurityGroupRules` and find ingress rules where `CidrIpv4` is `0.0.0.0/0` and the port range includes a restricted port (22, 3389).
+2. **Find the offending rule**: Call `ec2:DescribeSecurityGroupRules` and find ingress rules where `CidrIpv4` is `0.0.0.0/0` and the port range includes a restricted port (22 for EC2.18, 3389 for EC2.19).
 
 3. **Revoke the offending ingress rule**:
    ```
@@ -137,7 +135,7 @@ For EACH finding below, execute the AWS API calls immediately. After fixing each
 
 **Steps**:
 
-1. **Identify the bucket**: Extract the bucket name from the finding's `Resources[0].Id` field.
+1. **Identify the bucket**: Use the `resource_id` from the finding (e.g., `observability-demo-demo-vulnerable-public`).
 
 2. **Enable Block Public Access**:
    ```
@@ -159,13 +157,49 @@ For EACH finding below, execute the AWS API calls immediately. After fixing each
 
 5. **Verify**: Call `s3api:GetPublicAccessBlock` and confirm all four settings are `true`.
 
+### S3.4 — No Server-Side Encryption
+
+**Problem**: An S3 bucket does not have default server-side encryption configured. Data stored in this bucket is not encrypted at rest.
+
+**Steps**:
+
+1. **Identify the bucket**: Use the `resource_id` from the finding (e.g., `observability-demo-demo-vulnerable-noencrypt`).
+
+2. **Enable default SSE-S3 encryption**:
+   ```
+   aws s3api put-bucket-encryption \
+     --bucket <bucket-name> \
+     --server-side-encryption-configuration '{
+       "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+     }'
+   ```
+
+3. **Verify**: Call `s3api:GetBucketEncryption` and confirm `SSEAlgorithm` is `AES256`.
+
+### S3.11 — Versioning Not Enabled
+
+**Problem**: An S3 bucket does not have versioning enabled, preventing recovery of accidentally deleted or overwritten objects.
+
+**Steps**:
+
+1. **Identify the bucket**: Use the `resource_id` from the finding (e.g., `observability-demo-demo-vulnerable-noencrypt`).
+
+2. **Enable versioning**:
+   ```
+   aws s3api put-bucket-versioning \
+     --bucket <bucket-name> \
+     --versioning-configuration Status=Enabled
+   ```
+
+3. **Verify**: Call `s3api:GetBucketVersioning` and confirm `Status` is `Enabled`.
+
 ### EC2.3 — Unencrypted EBS Volume
 
 **Problem**: An EBS volume is not encrypted at rest.
 
 **Steps**:
 
-1. **Identify the volume**: Extract the volume ID from the finding's `Resources[0].Id` field.
+1. **Identify the volume**: Use the `resource_id` from the finding (e.g., `vol-0a82a4b99c2d23346`).
 
 2. **Check if the volume is attached**: Call `ec2:DescribeVolumes` to check the `Attachments` field.
 
@@ -199,7 +233,7 @@ For EACH finding below, execute the AWS API calls immediately. After fixing each
 
 **Steps**:
 
-1. **Identify the role**: Extract the role name from the finding's `Resources[0].Id` field (the role ARN).
+1. **Identify the role**: Use the `resource_id` from the finding (e.g., `demo-vulnerable-overpermissive`).
 
 2. **List attached policies**: Call `iam:ListAttachedRolePolicies` to find the offending policy.
 
@@ -226,158 +260,9 @@ For EACH finding below, execute the AWS API calls immediately. After fixing each
 
 ---
 
-## Phase 3: GuardDuty Threat Response (execute silently, do NOT output yet)
+## Phase 3: Final Report (THIS is the ONLY output to the user)
 
-After completing Phase 2, handle all GuardDuty findings. For each finding, call `securityhub:BatchUpdateFindings` to resolve it with a detailed investigation note. Do NOT output anything to the user yet — save all results for Phase 4.
-
-GuardDuty findings represent active threats, not misconfigurations. They require investigation, documentation, and resolution.
-
-### How to Find GuardDuty Findings
-
-Use the SAME GuardDuty query from Phase 1. For reference:
-
-```
-aws securityhub get-findings --region us-west-2 \
-  --filters '{
-    "RecordState":[{"Value":"ACTIVE","Comparison":"EQUALS"}],
-    "ProductName":[{"Value":"GuardDuty","Comparison":"EQUALS"}]
-  }'
-```
-
-For each finding returned, match its `Title` or `Types` field to the categories below and execute the corresponding response. Do NOT skip any finding.
-
-### Threat Responses by Category
-
-#### CryptoCurrency:EC2/BitcoinTool.B!DNS — Cryptocurrency Mining
-
-**Threat**: An EC2 instance is querying DNS domains associated with Bitcoin or cryptocurrency mining.
-
-**Response**:
-1. Identify the affected instance from the finding's `Resources[0].Id`.
-2. Document the instance ID, VPC, and security groups.
-3. Check if the instance belongs to the demo environment (check tags).
-4. Archive the finding and add a note documenting the investigation:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Instance identified and flagged. Cryptocurrency mining DNS activity detected — recommend isolating the instance and scanning for malware.","UpdatedBy":"aiden"}'
-   ```
-
-#### UnauthorizedAccess:EC2/MaliciousIPCaller.Custom — Malicious IP Communication
-
-**Threat**: An EC2 instance is communicating with a known malicious IP address.
-
-**Response**:
-1. Identify the affected instance and the malicious IP from the finding details.
-2. Document the communication direction (inbound/outbound), port, and protocol.
-3. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Malicious IP communication detected — recommend reviewing instance network ACLs and adding the IP to a deny list.","UpdatedBy":"aiden"}'
-   ```
-
-#### Recon:EC2/PortProbeUnprotectedPort — Port Scan Detected
-
-**Threat**: An unprotected port on an EC2 instance is being probed by a known malicious host.
-
-**Response**:
-1. Identify the instance, port, and source IP from the finding.
-2. Check if the probed port should be open. If the port is SSH (22) on a demo security group, this correlates with the EC2.18/EC2.19 compliance finding — note the correlation.
-3. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Port probe detected on exposed port. Correlates with open security group finding — SG remediation addresses root cause.","UpdatedBy":"aiden"}'
-   ```
-
-#### Trojan:EC2/DNSDataExfiltration — DNS Data Exfiltration
-
-**Threat**: An EC2 instance is exfiltrating data through DNS queries.
-
-**Response**:
-1. Identify the instance and DNS domain patterns.
-2. This is a high-severity threat. Document urgently:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. DNS data exfiltration pattern detected — HIGH PRIORITY. Recommend immediate instance isolation, forensic snapshot, and incident response.","UpdatedBy":"aiden"}'
-   ```
-
-#### Policy:Kubernetes/ExposedDashboard — Exposed Kubernetes Dashboard
-
-**Threat**: The Kubernetes dashboard is exposed to the internet on an EKS cluster.
-
-**Response**:
-1. Identify the affected EKS cluster from the finding.
-2. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Exposed Kubernetes dashboard detected — recommend removing public access and enforcing RBAC.","UpdatedBy":"aiden"}'
-   ```
-
-#### PrivilegeEscalation:Kubernetes/PrivilegedContainer — Privileged Container
-
-**Threat**: A privileged container was launched on an EKS cluster, which could allow container escape.
-
-**Response**:
-1. Identify the cluster, namespace, and pod from the finding.
-2. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Privileged container detected — recommend enforcing PodSecurityStandards to prevent privileged containers.","UpdatedBy":"aiden"}'
-   ```
-
-#### Discovery:Kubernetes/SuccessfulAnonymousAccess — Anonymous Kubernetes Access
-
-**Threat**: An API call was successfully made with anonymous credentials to the Kubernetes API.
-
-**Response**:
-1. Identify the cluster and the API call that was made.
-2. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Anonymous access to Kubernetes API detected — recommend disabling anonymous auth and reviewing RBAC bindings.","UpdatedBy":"aiden"}'
-   ```
-
-#### Impact:Kubernetes/MaliciousIPCaller — Malicious IP Accessing Kubernetes
-
-**Threat**: A Kubernetes API was called from a known malicious IP address.
-
-**Response**:
-1. Identify the cluster, source IP, and API action.
-2. Archive and document:
-   ```
-   aws securityhub batch-update-findings \
-     --finding-identifiers '[{"Id":"<finding-id>","ProductArn":"<product-arn>"}]' \
-     --workflow '{"Status":"RESOLVED"}' \
-     --note '{"Text":"Investigated by Aiden. Kubernetes API access from malicious IP — recommend blocking the IP in security groups and reviewing cluster access logs.","UpdatedBy":"aiden"}'
-   ```
-
-### GuardDuty Response Pattern
-
-For ALL GuardDuty findings, follow this pattern:
-
-1. **Investigate**: Extract instance/cluster/resource details from the finding
-2. **Correlate**: Check if the threat relates to any compliance finding (e.g., open SG leads to port probing)
-3. **Document**: Add a detailed note with the investigation findings and recommended next steps
-4. **Resolve**: Set workflow status to `RESOLVED` via `securityhub:BatchUpdateFindings`
-
----
-
-## Phase 4: Final Report (THIS is the ONLY output to the user)
-
-This is the ONLY phase where you output anything to the user. Everything above must have been executed silently. Now produce a SINGLE combined report that covers what was found AND what was done.
+This is the ONLY phase where you output anything to the user. Everything above must have been executed silently. Now produce a SINGLE combined report that covers what was found in the payload AND what remediations you executed.
 
 Your response to the user must follow this format:
 
@@ -386,63 +271,59 @@ Your response to the user must follow this format:
   AWS Security Remediation Report — us-west-2
 ============================================================
 
---- Compliance Findings Found & Remediated ---
+--- Findings Received & Remediated ---
 
-#  Control   Severity  Resource                         Action Taken
-─  ────────  ────────  ───────────────────────────────  ─────────────────────────────
-1  EC2.19    CRITICAL  sg-018fc83a379deac4b             Revoked 0.0.0.0/0 SSH rule
-2  S3.8      HIGH      demo-vulnerable-public           Enabled Block Public Access
-3  EC2.3     MEDIUM    vol-0a82a4b99c2d23346            Replaced with encrypted volume
-4  IAM.1     HIGH      demo-vulnerable-overpermissive   Detached AdministratorAccess
-
---- GuardDuty Threats Found & Investigated ---
-
-#  Type                                    Severity  Action Taken
-─  ──────────────────────────────────────  ────────  ──────────────────────────────────
-5  CryptoCurrency:EC2/BitcoinTool.B!DNS    HIGH      Investigated, documented, resolved
-6  Recon:EC2/PortProbeUnprotectedPort      LOW       Correlated with SG fix, resolved
-7  Trojan:EC2/DNSDataExfiltration          HIGH      Investigated, documented, resolved
-8  PrivilegeEscalation:Kubernetes/Priv..   MEDIUM    Investigated, documented, resolved
-9  Policy:Kubernetes/ExposedDashboard      MEDIUM    Investigated, documented, resolved
+#  Control   Severity  Resource                              Action Taken                           Status
+─  ────────  ────────  ────────────────────────────────────  ─────────────────────────────────────  ────────
+1  EC2.19    CRITICAL  sg-0f39f362b89f0dc98                  Revoked 0.0.0.0/0 RDP (3389) rule     FIXED
+2  EC2.18    HIGH      sg-0f39f362b89f0dc98                  Revoked 0.0.0.0/0 SSH (22) rule       FIXED
+3  EC2.8     HIGH      i-090e7735ddb600e97                   Enforced IMDSv2 (http_tokens=required) FIXED
+4  EC2.8     HIGH      i-061d35d1d8cd3ad3f                   Enforced IMDSv2 (http_tokens=required) FIXED
+5  S3.1      HIGH      observability-demo-demo-vulnerable-public  Enabled Block Public Access       FIXED
+6  IAM.1     HIGH      demo-vulnerable-overpermissive        Detached AdministratorAccess           FIXED
+7  S3.4      MEDIUM    observability-demo-demo-vulnerable-noencrypt  Enabled SSE-S3 encryption      FIXED
+8  EC2.3     MEDIUM    vol-0a82a4b99c2d23346                 Replaced with encrypted volume         FIXED
+9  S3.11     LOW       observability-demo-demo-vulnerable-noencrypt  Enabled versioning             FIXED (if present)
 
 --- Summary ---
 
-Compliance findings remediated: 4/4
-Threat findings investigated:   5/5
-All findings marked RESOLVED in Security Hub.
+Total findings received:  8
+Remediations executed:    8/8
+All vulnerabilities resolved.
 ============================================================
 ```
 
-Adjust the actual numbers, resource IDs, and finding types based on what you found and did. If a category had zero findings, say "None found" for that section.
+Adjust the actual numbers, resource IDs, and finding types based on what was in the webhook payload and what you actually did. Include the real output of each AWS API call (success/failure). If a remediation failed, report the error.
 
 ## Verification
 
 After all actions, verify:
 
-- [ ] Security group has no `0.0.0.0/0` ingress rules on restricted ports
-- [ ] S3 bucket has all four Block Public Access settings set to `true`
+- [ ] Security group has no `0.0.0.0/0` ingress rules on restricted ports (SSH 22, RDP 3389)
+- [ ] Both EC2 instances have IMDSv2 enforced (`HttpTokens = required`)
+- [ ] S3 bucket `demo-vulnerable-public` has all four Block Public Access settings set to `true`
+- [ ] S3 bucket `demo-vulnerable-noencrypt` has default encryption enabled (AES256)
+- [ ] S3 bucket `demo-vulnerable-noencrypt` has versioning enabled
 - [ ] EBS volume is encrypted (or replaced with an encrypted volume)
 - [ ] IAM role has no policies granting full administrative access
-- [ ] All compliance findings show `RESOLVED` workflow status
-- [ ] All GuardDuty findings show `RESOLVED` workflow status with investigation notes
+- [ ] All findings from the webhook payload have been remediated
 
 ## Guardrails
 
+- **Only remediate resources listed in the webhook payload** — do not touch other resources in the account.
 - **Never delete IAM roles entirely** — only detach overly permissive policies and replace with least-privilege alternatives.
 - **Never delete attached EBS volumes** — only remediate unattached volumes. Flag attached volumes for manual review.
-- **Never modify security groups used by the EKS cluster** (`eks-cluster-sg-*`, node security groups). Only remediate security groups tagged with `Purpose=security-demo`.
-- **Only remediate compliance findings for resources tagged with `Purpose=security-demo`** — do not touch other resources in the account.
-- **GuardDuty findings do not require the `Purpose=security-demo` tag** — investigate all GuardDuty findings regardless of tags.
+- **Never modify security groups used by the EKS cluster** (`eks-cluster-sg-*`, node security groups). Only remediate security groups from the payload.
 - **Tag all resources modified or created** with `ManagedBy=aiden` for audit trail.
-- **Always add a note to every finding** documenting what was investigated, changed, and recommended.
-- **Never terminate EC2 instances** in response to GuardDuty findings — document and recommend isolation instead.
+- **Never terminate EC2 instances** — only modify metadata options, security groups, and IAM attachments.
 
-## AWS APIs Used
+## AWS APIs Used (Remediation Only — No Security Hub Queries)
 
-- `securityhub:GetFindings` — Retrieve active failed findings (compliance and GuardDuty)
-- `securityhub:BatchUpdateFindings` — Update finding workflow status after remediation
-- `guardduty:ListDetectors` / `guardduty:ListFindings` / `guardduty:GetFindings` — Direct GuardDuty queries (optional, since findings also appear in Security Hub)
+- `ec2:ModifyInstanceMetadataOptions` — Enforce IMDSv2 on EC2 instances
 - `ec2:DescribeSecurityGroupRules` / `ec2:RevokeSecurityGroupIngress` / `ec2:AuthorizeSecurityGroupIngress` — SG remediation
-- `s3api:PutPublicAccessBlock` / `s3api:PutBucketAcl` / `s3api:DeleteBucketPolicy` — S3 remediation
+- `s3api:PutPublicAccessBlock` / `s3api:PutBucketAcl` / `s3api:DeleteBucketPolicy` — S3 public access remediation
+- `s3api:PutBucketEncryption` / `s3api:GetBucketEncryption` — S3 encryption remediation
+- `s3api:PutBucketVersioning` / `s3api:GetBucketVersioning` — S3 versioning remediation
 - `ec2:CreateSnapshot` / `ec2:CreateVolume` / `ec2:DeleteVolume` — EBS remediation
 - `iam:ListAttachedRolePolicies` / `iam:DetachRolePolicy` / `iam:AttachRolePolicy` — IAM remediation
+- `ec2:DescribeInstances` / `ec2:DescribeVolumes` — Verification after remediation

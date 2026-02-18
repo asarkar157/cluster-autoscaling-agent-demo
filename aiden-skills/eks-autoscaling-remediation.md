@@ -1,8 +1,20 @@
 # Skill: EKS Node Pool Auto-Scaling Remediation
 
+## CRITICAL INSTRUCTION — READ THIS FIRST
+
+This skill MUST be executed as a SINGLE atomic operation. You must complete ALL phases — scanning, detecting, AND remediating — before you produce ANY output to the user. Do not send partial results. Do not send the scan summary and then promise to continue. Your response to the user must be ONE message that contains the complete results of everything you did.
+
+Rules:
+1. Do NOT output anything to the user until ALL work is done (scanning AND remediation).
+2. Do NOT say "proceeding to..." or "next step..." or "I will now..." — just DO it silently.
+3. Do NOT ask for confirmation at any point.
+4. Do NOT stop after scanning — if remediation is needed, you must EXECUTE it before outputting anything.
+5. Do NOT split your work across multiple messages. ONE response only.
+6. Execute every API call needed, collect the results, then present ONE final report that includes both the fleet scan AND any actions taken.
+
 ## Objective
 
-Scan ALL EKS clusters in the region, report a utilization summary for each, then automatically right-size any cluster that is overutilized (by creating larger node groups) or underutilized (by removing excess node groups).
+Scan ALL EKS clusters in the region, then automatically right-size any cluster that is overutilized (by creating larger node groups) or underutilized (by removing excess node groups). Present ONE combined report at the end.
 
 ## Target Environment
 
@@ -15,9 +27,9 @@ Scan ALL EKS clusters in the region, report a utilization summary for each, then
 
 ---
 
-## Phase 1: Region-Wide Cluster Scan
+## Phase 1: Region-Wide Cluster Scan (do NOT output anything yet)
 
-Before taking any remediation action, you MUST scan every EKS cluster in the region and produce a summary. This gives visibility into the full fleet.
+Scan every EKS cluster in the region silently. Save all results internally — do NOT output anything to the user during this phase.
 
 ### Steps
 
@@ -31,38 +43,22 @@ Before taking any remediation action, you MUST scan every EKS cluster in the reg
    - Call `eks:ListNodegroups` to get node group names, then `eks:DescribeNodegroup` on each to get instance types, node count, and status.
    - Query **CloudWatch Container Insights** for the cluster's `node_cpu_utilization` and `node_memory_utilization` metrics (namespace `ContainerInsights`, dimension `ClusterName`). Use a 5-minute average.
 
-3. **Output a summary table** with the following format:
-
-   ```
-   ============================================================
-     EKS Cluster Fleet — us-west-2 — Utilization Report
-   ============================================================
-
-   Cluster            Nodes  Instance Type  CPU %   Memory %  Status
-   ─────────────────  ─────  ─────────────  ──────  ────────  ──────────────
-   observability-demo 2      t3.medium      92%     61%       OVERUTILIZED
-   payments-api       1      t3.small       38%     29%       HEALTHY
-   inventory-svc      1      t3.small       35%     27%       HEALTHY
-
-   Clusters scanned: 3
-   Clusters requiring action: 1 (observability-demo)
-   ============================================================
-   ```
+3. **Record the results internally** (do NOT output yet). For each cluster, classify its status:
 
    Classification rules:
    - **OVERUTILIZED**: CPU > 80% OR memory > 75% OR pods in Pending state
    - **UNDERUTILIZED**: CPU < 30% AND no Pending pods AND more than one node group exists
    - **HEALTHY**: Everything else (nominal utilization, no action needed)
 
-4. **If no clusters require action**, state that the fleet is healthy and stop. Do not proceed to Phase 2.
+4. **If no clusters require action**, skip to Phase 3 (Final Report) and report a healthy fleet.
 
-5. **If a cluster requires action**, proceed to Phase 2 for that cluster only.
+5. **If a cluster requires action**, proceed SILENTLY to Phase 2. Do NOT output a scan summary and stop — you must execute the remediation first.
 
 ---
 
-## Phase 2: Remediation (observability-demo only)
+## Phase 2: Remediation — execute silently (do NOT output anything yet)
 
-Only the `observability-demo` cluster is eligible for remediation. If other clusters show issues, report them in the summary but do NOT take action on them.
+Only the `observability-demo` cluster is eligible for remediation. If other clusters show issues, note them internally but do NOT take action on them. Execute all remediation API calls silently and save the results for the final report.
 
 ## IMPORTANT: Node Group Name Discovery
 
@@ -110,25 +106,7 @@ Check for ALL of the following signals. ALL must be true to confirm underutiliza
 
 ## Remediation Actions
 
-Before executing any remediation step, output a clear action header:
-
-```
-============================================================
-  ACTION: Scale Up — observability-demo
-  Reason: Node CPU utilization at 92% (threshold: 80%)
-  Creating node group: large-pool (3x t3.xlarge)
-============================================================
-```
-
-Or for scale-down:
-
-```
-============================================================
-  ACTION: Scale Down — observability-demo
-  Reason: Node CPU utilization at 24% (threshold: 30%)
-  Removing node group: large-pool-<suffix>
-============================================================
-```
+Execute the appropriate remediation immediately. Do NOT output anything yet — save the action details for the Phase 3 final report.
 
 ### Scale Up (Overutilization Detected)
 
@@ -180,21 +158,41 @@ Perform the following steps in order:
 
 **IMPORTANT**: Do not skip step 3. When you detect underutilization and a `large-pool` node group exists, you must call `eks:DeleteNodegroup` to remove it. Simply reporting the underutilization without taking action is not sufficient.
 
-## Verification & Post-Action Summary
+## Phase 3: Final Report (THIS is the ONLY output to the user)
 
-After any remediation action, verify the following and then output an updated summary:
+This is the ONLY phase where you output anything to the user. Everything above must have been executed silently. Now produce a SINGLE report that covers what you scanned AND what you did.
+
+After any remediation action, verify the following before producing the report:
 
 - [ ] All nodes report `Ready` status
 - [ ] All pods in the `demo` namespace are `Running` (zero `Pending`)
 - [ ] Node CPU utilization is between 20% and 80%
 - [ ] CloudWatch Container Insights shows updated node count
 
-Then output the post-remediation fleet status:
+Your response to the user MUST follow this format:
 
 ```
 ============================================================
-  Post-Remediation — EKS Fleet Status
+  EKS Cluster Fleet — us-west-2 — Scan & Remediation Report
 ============================================================
+
+Cluster            Nodes  Instance Type  CPU %   Memory %  Status
+─────────────────  ─────  ─────────────  ──────  ────────  ──────────────
+observability-demo 2      t3.medium      92%     61%       OVERUTILIZED
+payments-api       1      t3.small       38%     29%       HEALTHY
+inventory-svc      1      t3.small       35%     27%       HEALTHY
+
+Clusters scanned: 3
+Clusters requiring action: 1 (observability-demo)
+
+============================================================
+  ACTION TAKEN: Scale Up — observability-demo
+  Reason: Node CPU utilization at 92% (threshold: 80%)
+  Created node group: large-pool (3x t3.xlarge)
+  Node group status: ACTIVE
+============================================================
+
+--- Post-Remediation Fleet Status ---
 
 Cluster            Nodes  Instance Type     CPU %   Status
 ─────────────────  ─────  ───────────────   ──────  ──────────────
@@ -202,9 +200,10 @@ observability-demo 5      t3.medium+xlarge  45%     REMEDIATED ✓
 payments-api       1      t3.small          38%     HEALTHY
 inventory-svc      1      t3.small          35%     HEALTHY
 
-Action taken: Created large-pool (3x t3.xlarge) on observability-demo
 ============================================================
 ```
+
+If no remediation was needed, omit the "ACTION TAKEN" and "Post-Remediation" sections and just show the fleet scan with "All clusters healthy — no action required."
 
 ## Action Summary
 

@@ -108,6 +108,32 @@
         "guardduty:GetFindings"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "CrossAccountAssumeRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::347161580392:role/aiden-inventory-role",
+        "arn:aws:iam::339712749745:role/aiden-inventory-role"
+      ]
+    },
+    {
+      "Sid": "InventoryReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeListeners",
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBClusters",
+        "rds:ListTagsForResource",
+        "lambda:ListFunctions",
+        "lambda:GetFunction",
+        "tag:GetResources",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
     }
   ]
 }

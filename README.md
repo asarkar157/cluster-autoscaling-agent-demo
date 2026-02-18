@@ -197,6 +197,75 @@ View findings at:
 
 ---
 
+## Part 3: Cloud Asset Inventory Management
+
+### Overview
+
+Aiden scans multiple AWS accounts and produces a consolidated cloud asset inventory report. This
+demonstrates cross-account visibility without requiring manual login to each account — Aiden
+assumes a read-only IAM role in each target account via `sts:AssumeRole`.
+
+### Accounts
+
+| Account | Role | Access Method |
+|---------|------|---------------|
+| 180217099948 (primary) | aiden-demo home account | Direct credentials |
+| 347161580392 (secondary 1) | Target inventory account | Cross-account role assumption |
+| 339712749745 (secondary 2) | Target inventory account | Cross-account role assumption |
+
+### Resources Inventoried
+
+- **Compute**: EC2 instances, EKS clusters (with node groups), Lambda functions
+- **Networking**: VPCs, Application/Network Load Balancers
+- **Storage**: S3 buckets, EBS volumes
+- **Database**: RDS instances
+- **Identity**: IAM roles and users (counts)
+
+### Cross-Account Setup
+
+Before running the inventory skill, deploy the cross-account IAM role in each secondary account:
+
+```bash
+# Account 347161580392
+aws sso login --profile <account-347-profile>
+./scripts/setup-cross-account.sh --profile <account-347-profile>
+
+# Account 339712749745
+aws sso login --profile <account-339-profile>
+./scripts/setup-cross-account.sh --profile <account-339-profile>
+```
+
+This creates an `aiden-inventory-role` in each secondary account with:
+- A trust policy allowing `aiden-demo` from 180217099948 to assume it
+- Read-only permissions for EC2, EKS, ELB, S3, RDS, Lambda, IAM, and VPC resources
+
+Then update the aiden-demo IAM policy in the primary account:
+
+```bash
+aws iam put-user-policy --user-name aiden-demo \
+  --policy-name aiden-demo-policy \
+  --policy-document file://iam/aiden-demo-policy.json
+```
+
+### Inventory Demo Flow
+
+1. Cross-account role is deployed in 347161580392 and 339712749745 (one-time setup per account)
+2. Aiden's IAM policy includes `sts:AssumeRole` permission for both roles (one-time setup)
+3. Run the Aiden inventory skill — it scans all 3 accounts and produces a report
+4. Report shows all resources across all accounts with per-account breakdowns and totals
+
+### CloudFormation Template
+
+The cross-account role template is at `iam/cross-account-inventory-role.yaml`. It accepts parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| TrustedAccountId | 180217099948 | Account where aiden-demo lives |
+| TrustedUserName | aiden-demo | IAM user that will assume the role |
+| RoleName | aiden-inventory-role | Name of the role to create |
+
+---
+
 ## Repository Structure
 
 ```
@@ -208,7 +277,8 @@ observability-demo/
 │   ├── outputs.tf                      # Cluster info outputs
 │   ├── vpc.tf                          # VPC with public + private subnets
 │   ├── eks.tf                          # EKS cluster + small node group
-│   ├── security.tf                     # GuardDuty + Security Hub
+│   ├── dummy-clusters.tf              # Baseline EKS clusters (payments, inventory)
+│   ├── security.tf                     # GuardDuty + Security Hub + AWS Config
 │   ├── vulnerable.tf                   # Intentionally misconfigured resources
 │   └── security_outputs.tf             # Security-related outputs
 ├── kubernetes/
@@ -217,9 +287,19 @@ observability-demo/
 │   ├── demo-app/
 │   │   ├── deployment.yaml             # nginx (3 replicas)
 │   │   └── service.yaml                # ClusterIP service
-│   └── stress/
-│       ├── stress-deployment.yaml      # stress-ng (1 replica, scalable)
-│       └── resource-hog.yaml           # Batch job for burst load
+│   ├── stress/
+│   │   ├── stress-deployment.yaml      # stress-ng (1 replica, scalable)
+│   │   └── resource-hog.yaml           # Batch job for burst load
+│   └── dummy-workload/
+│       ├── namespace.yaml              # workload namespace
+│       └── stress-light.yaml           # Light CPU load for dummy clusters
+├── iam/
+│   ├── aiden-demo-policy.json          # IAM policy for aiden-demo user
+│   └── cross-account-inventory-role.yaml  # CloudFormation for cross-account role
+├── aiden-skills/
+│   ├── eks-autoscaling-remediation.md  # EKS node pool auto-scaling skill
+│   ├── security-finding-remediation.md # Security Hub remediation skill
+│   └── cloud-inventory-management.md   # Multi-account inventory skill
 ├── scripts/
 │   ├── setup.sh                        # Full setup automation
 │   ├── teardown.sh                     # Full teardown
@@ -227,7 +307,9 @@ observability-demo/
 │   ├── load-down.sh                    # Scale stress pods down
 │   ├── check-utilization.sh            # Live utilization monitor
 │   ├── check-findings.sh              # View Security Hub findings
-│   └── reset-demo.sh                  # Reset security demo state
+│   ├── reset-demo.sh                  # Reset security demo state
+│   ├── generate-guardduty-findings.sh # Generate sample GuardDuty findings
+│   └── setup-cross-account.sh         # Deploy cross-account inventory role
 └── monitoring/
     ├── grafana-dashboard.json          # Node utilization dashboard
     └── prometheus-values.yaml          # Prometheus + Grafana Helm values
@@ -270,5 +352,6 @@ Running this demo costs approximately:
 - NAT Gateway: ~$0.045/hr
 - GuardDuty: ~$0.04/hr (~$1/day)
 - Security Hub: negligible (~$0.001/finding/month)
+- Cross-account IAM role: free (IAM has no charge)
 - **Total (small pool only): ~$0.27/hr**
 - With large pool (3x t3.xlarge): add ~$0.50/hr
