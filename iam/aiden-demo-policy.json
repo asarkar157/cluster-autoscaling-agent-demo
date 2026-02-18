@@ -70,7 +70,8 @@
         "ec2:CreateSnapshot",
         "ec2:CreateVolume",
         "ec2:DeleteVolume",
-        "ec2:CreateTags"
+        "ec2:CreateTags",
+        "ec2:ModifyInstanceMetadataOptions"
       ],
       "Resource": "*"
     },
@@ -84,7 +85,11 @@
         "s3:GetBucketAcl",
         "s3:GetBucketPolicy",
         "s3:DeleteBucketPolicy",
-        "s3:ListAllMyBuckets"
+        "s3:ListAllMyBuckets",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutBucketVersioning",
+        "s3:GetBucketVersioning"
       ],
       "Resource": "*"
     },

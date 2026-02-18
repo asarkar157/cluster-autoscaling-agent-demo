@@ -21,14 +21,17 @@ echo "Region:      $REGION"
 echo ""
 
 FINDING_TYPES=(
-  "CryptoCurrency:EC2/BitcoinTool.B!DNS"
-  "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom"
+  # EC2 — matches open SSH/RDP security group + public instances
   "Recon:EC2/PortProbeUnprotectedPort"
-  "Trojan:EC2/DNSDataExfiltration"
-  "Policy:Kubernetes/ExposedDashboard"
-  "PrivilegeEscalation:Kubernetes/PrivilegedContainer"
-  "Discovery:Kubernetes/SuccessfulAnonymousAccess"
-  "Impact:Kubernetes/MaliciousIPCaller"
+  "UnauthorizedAccess:EC2/SSHBruteForce"
+  "UnauthorizedAccess:EC2/RDPBruteForce"
+  "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom"
+  # EC2 — matches no IMDSv2 + admin role on public instance
+  "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS"
+  "CryptoCurrency:EC2/BitcoinTool.B!DNS"
+  # S3 — matches public bucket + unencrypted bucket
+  "Policy:S3/BucketBlockPublicAccessDisabled"
+  "Exfiltration:S3/AnomalousBehavior"
 )
 
 echo "Generating ${#FINDING_TYPES[@]} sample findings..."

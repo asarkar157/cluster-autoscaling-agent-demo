@@ -59,14 +59,14 @@ echo "[3/4] Generating fresh GuardDuty sample findings..."
 aws guardduty create-sample-findings \
   --detector-id "$DETECTOR_ID" \
   --finding-types \
-    "CryptoCurrency:EC2/BitcoinTool.B!DNS" \
-    "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom" \
     "Recon:EC2/PortProbeUnprotectedPort" \
-    "Trojan:EC2/DNSDataExfiltration" \
-    "Policy:Kubernetes/ExposedDashboard" \
-    "PrivilegeEscalation:Kubernetes/PrivilegedContainer" \
-    "Discovery:Kubernetes/SuccessfulAnonymousAccess" \
-    "Impact:Kubernetes/MaliciousIPCaller" \
+    "UnauthorizedAccess:EC2/SSHBruteForce" \
+    "UnauthorizedAccess:EC2/RDPBruteForce" \
+    "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom" \
+    "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS" \
+    "CryptoCurrency:EC2/BitcoinTool.B!DNS" \
+    "Policy:S3/BucketBlockPublicAccessDisabled" \
+    "Exfiltration:S3/AnomalousBehavior" \
   --region "$REGION"
 echo "  Generated 8 sample GuardDuty findings."
 
