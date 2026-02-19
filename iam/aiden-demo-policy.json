@@ -12,6 +12,7 @@
         "eks:CreateNodegroup",
         "eks:DeleteNodegroup",
         "eks:UpdateNodegroupConfig",
+        "eks:ListFargateProfiles",
         "eks:TagResource"
       ],
       "Resource": "*"
